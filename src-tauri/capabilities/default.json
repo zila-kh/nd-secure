@@ -1,0 +1,12 @@
+{
+  "identifier": "default",
+  "description": "Narrow permissions for the ND Secure application shell",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-clear"
+  ]
+}
