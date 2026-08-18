@@ -1,8 +1,10 @@
 <script lang="ts">
-  export let type = 'text';
+  import type { HTMLInputAttributes } from 'svelte/elements';
+
+  export let type: HTMLInputAttributes['type'] = 'text';
   export let value: string | number = '';
   export let placeholder = '';
-  export let autocomplete = 'off';
+  export let autocomplete: HTMLInputAttributes['autocomplete'] = 'off';
   export let disabled = false;
   export let required = false;
   export let minlength: number | undefined = undefined;
