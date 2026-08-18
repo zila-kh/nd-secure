@@ -14,7 +14,13 @@ pub fn random_array<const N: usize>() -> [u8; N] {
     output
 }
 
-pub fn derive_domain_key(master_key: &[u8; 32], domain: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
+pub fn derive_domain_key(master_key: &[u8], domain: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
+    if master_key.len() != 32 {
+        return Err(VaultError::InvalidInput(
+            "master key must contain exactly 32 bytes".into(),
+        ));
+    }
+
     let hkdf = Hkdf::<Sha256>::new(Some(b"nd-secure/root-salt/v1"), master_key);
     let mut output = Zeroizing::new([0_u8; 32]);
     hkdf.expand(domain, output.as_mut())
