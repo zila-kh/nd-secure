@@ -227,7 +227,7 @@ impl SessionState {
         self.expire_if_idle();
         let mut inner = self.inner.lock();
         let unlocked = inner.unlocked.as_mut().ok_or(VaultError::Locked)?;
-        let key = derive_domain_key(unlocked.master_key.as_ref(), domain)?;
+        let key = derive_domain_key(&*unlocked.master_key, domain)?;
         unlocked.last_activity = Instant::now();
         Ok(key)
     }
