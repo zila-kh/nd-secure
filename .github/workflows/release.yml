@@ -1,0 +1,277 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+  RUST_TOOLCHAIN: stable
+  RELEASE_CONFIG: src-tauri/tauri.release.conf.json
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      release_config_json: ${{ steps.metadata.outputs.release_config_json }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - id: metadata
+        name: Generate immutable release metadata
+        run: node .github/release/metadata.mjs
+
+  verify:
+    name: Verify source
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Install Linux prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget xdg-utils
+      - run: npm install --no-audit --no-fund
+      - name: Validate frontend
+        run: |
+          npm run lint
+          npm run build
+      - name: Validate Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo check --manifest-path src-tauri/Cargo.toml --all-targets
+          cargo test --manifest-path src-tauri/Cargo.toml
+
+  build_desktop:
+    name: Build ${{ matrix.label }}
+    needs: [prepare, verify]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows x64
+            os: windows-2025
+            target: x86_64-pc-windows-msvc
+            artifact: release-windows-x64
+          - label: macOS Apple Silicon
+            os: macos-15
+            target: aarch64-apple-darwin
+            artifact: release-macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install Rust target
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustup target add "${{ matrix.target }}"
+      - run: npm install --no-audit --no-fund
+      - name: Write release configuration
+        shell: bash
+        env:
+          RELEASE_CONFIG_JSON: ${{ needs.prepare.outputs.release_config_json }}
+        run: printf '%s\n' "$RELEASE_CONFIG_JSON" > "$RELEASE_CONFIG"
+      - name: Configure Windows signing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+        run: .github/release/configure-windows-signing.ps1
+      - name: Configure Apple signing and notarization
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash .github/release/configure-macos-signing.sh
+      - name: Build desktop bundle
+        shell: bash
+        run: npm run tauri build -- --ci --target "${{ matrix.target }}" --config "$RELEASE_CONFIG"
+      - name: Stage Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bundlePath = "src-tauri/target/${{ matrix.target }}/release/bundle/nsis"
+          $installers = @(Get-ChildItem -Path $bundlePath -Filter *.exe -File)
+          if ($installers.Count -ne 1) { throw "Expected one NSIS installer, found $($installers.Count)." }
+          New-Item -ItemType Directory -Path release -Force | Out-Null
+          Copy-Item $installers[0].FullName "release/ND-Secure_${env:VERSION}_windows-x64-setup.exe"
+      - name: Stage macOS disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          bundle_path="src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
+          files_list="$RUNNER_TEMP/dmg-files.txt"
+          find "$bundle_path" -maxdepth 1 -type f -name '*.dmg' -print > "$files_list"
+          count="$(wc -l < "$files_list" | tr -d ' ')"
+          [[ "$count" == "1" ]] || { echo "Expected one DMG, found $count." >&2; exit 1; }
+          mkdir -p release
+          cp "$(head -n 1 "$files_list")" "release/ND-Secure_${VERSION}_macos-arm64.dmg"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.artifact }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  build_android:
+    name: Build signed Android ARM64
+    needs: [prepare, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    outputs:
+      enabled: ${{ steps.signing.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - id: signing
+        name: Validate Android signing secrets
+        env:
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: node .github/release/check-secret-group.mjs ANDROID_KEY_BASE64 ANDROID_KEY_ALIAS ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_PASSWORD
+      - if: steps.signing.outputs.enabled == 'true'
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Rust Android target
+        if: steps.signing.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustup target add aarch64-linux-android
+      - name: Configure Android SDK and NDK
+        if: steps.signing.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          ndk_home="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -n 1)"
+          [[ -n "$ndk_home" ]] || { echo "No Android NDK installation was found." >&2; exit 1; }
+          echo "NDK_HOME=$ndk_home" >> "$GITHUB_ENV"
+      - if: steps.signing.outputs.enabled == 'true'
+        run: npm install --no-audit --no-fund
+      - name: Initialize Android project
+        if: steps.signing.outputs.enabled == 'true'
+        run: npm run tauri android init -- --ci --skip-targets-install
+      - name: Write release configuration
+        if: steps.signing.outputs.enabled == 'true'
+        shell: bash
+        env:
+          RELEASE_CONFIG_JSON: ${{ needs.prepare.outputs.release_config_json }}
+        run: printf '%s\n' "$RELEASE_CONFIG_JSON" > "$RELEASE_CONFIG"
+      - name: Build Android bundles
+        if: steps.signing.outputs.enabled == 'true'
+        shell: bash
+        run: npm run tauri android build -- --ci --target aarch64 --apk --aab --config "$RELEASE_CONFIG"
+      - name: Sign and verify Android bundles
+        if: steps.signing.outputs.enabled == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: bash .github/release/sign-android.sh
+      - if: steps.signing.outputs.enabled == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-android-arm64
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  release:
+    name: Publish GitHub release
+    needs: [prepare, verify, build_desktop, build_android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: Validate and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ANDROID_ENABLED: ${{ needs.build_android.outputs.enabled }}
+        run: bash .github/release/publish-release.sh
