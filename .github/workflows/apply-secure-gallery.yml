@@ -2,6 +2,8 @@ name: Apply and validate secure gallery implementation
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     branches: ["agent/encrypted-thumbnails-safe-import-bootstrap"]
 
@@ -20,6 +22,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: agent/encrypted-thumbnails-safe-import-bootstrap
 
       - name: Verify and apply implementation archive
         shell: bash
