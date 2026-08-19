@@ -50,15 +50,6 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt,clippy
           rustup default stable
 
-      - name: Install Linux prerequisites
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
-            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget xdg-utils
-
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
 
@@ -73,6 +64,18 @@ jobs:
         run: |
           npm run lint
           npm run build
+
+      - name: Install Linux prerequisites
+        shell: bash
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          NEEDRESTART_MODE: a
+        run: |
+          set -euo pipefail
+          sudo -E apt-get -o Dpkg::Use-Pty=0 update
+          sudo -E apt-get -o Dpkg::Use-Pty=0 install -y --no-install-recommends \
+            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget xdg-utils
 
       - name: Validate Rust
         shell: bash
