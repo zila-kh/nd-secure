@@ -2,8 +2,8 @@ name: Apply and validate secure gallery implementation
 
 on:
   workflow_dispatch:
-  push:
-    branches: ["agent/encrypted-thumbnails-safe-import-bootstrap"]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
