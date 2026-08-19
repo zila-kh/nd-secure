@@ -1,0 +1,1 @@
+-keep class kh.zila.ndsecure.vaultsource.** { *; }

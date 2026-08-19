@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ND Secure",
+  "version": "0.1.0",
+  "identifier": "kh.zila.ndsecure",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "ND Secure",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 360,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "capabilities": ["default"],
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: vault: http://vault.localhost https://vault.localhost; media-src 'self' blob: vault: http://vault.localhost https://vault.localhost; connect-src 'self' ipc: http://ipc.localhost vault: http://vault.localhost https://vault.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Utility",
+    "shortDescription": "Encrypted gallery and password vault",
+    "longDescription": "A local-first encrypted gallery vault and password manager for Windows, Apple Silicon macOS, and Android."
+  }
+}
