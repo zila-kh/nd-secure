@@ -17,8 +17,7 @@ pub fn random_array<const N: usize>() -> [u8; N] {
 pub fn derive_domain_key(master_key: &[u8; 32], domain: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
     let hkdf = Hkdf::<Sha256>::new(Some(b"nd-secure/root-salt/v1"), master_key);
     let mut output = Zeroizing::new([0_u8; 32]);
-    hkdf.expand(domain, output.as_mut())
-        .map_err(|_| VaultError::Crypto)?;
+    hkdf.expand(domain, output.as_mut()).map_err(|_| VaultError::Crypto)?;
     Ok(output)
 }
 
@@ -29,7 +28,6 @@ pub fn derive_object_key(
 ) -> Result<Zeroizing<[u8; 32]>> {
     let hkdf = Hkdf::<Sha256>::new(Some(salt), root_key);
     let mut output = Zeroizing::new([0_u8; 32]);
-    hkdf.expand(context, output.as_mut())
-        .map_err(|_| VaultError::Crypto)?;
+    hkdf.expand(context, output.as_mut()).map_err(|_| VaultError::Crypto)?;
     Ok(output)
 }

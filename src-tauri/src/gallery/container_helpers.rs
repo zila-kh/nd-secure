@@ -105,7 +105,7 @@ fn decode_header(bytes: &[u8; HEADER_SIZE]) -> Result<Header> {
     if total_size == 0
         || total_size > MAX_FILE_BYTES
         || chunk_count == 0
-        || chunk_count != (total_size + CHUNK_SIZE as u64 - 1) / CHUNK_SIZE as u64
+        || chunk_count != total_size.div_ceil(CHUNK_SIZE as u64)
         || metadata_cipher_len as usize <= TAG_SIZE
         || metadata_cipher_len as usize > MAX_METADATA_CIPHER_BYTES
     {

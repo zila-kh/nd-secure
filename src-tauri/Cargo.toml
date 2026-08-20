@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local-first encrypted gallery and password vault"
 authors = ["zila-kh"]
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.88.0"
 
 [lib]
 name = "nd_secure_lib"
@@ -20,6 +20,7 @@ base64 = "0.22"
 data-encoding = "2.6"
 hkdf = "0.12"
 hmac = "0.12"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 parking_lot = "0.12"
 rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -37,6 +38,9 @@ url = "2.5"
 uuid = { version = "1", features = ["v4", "serde"] }
 zeroize = { version = "1.8", features = ["derive"] }
 
+[target.'cfg(not(target_os = "android"))'.dependencies]
+same-file = "1.0.6"
+
 [target.'cfg(target_os = "android")'.dependencies]
 libc = "0.2"
 tauri-plugin-vault-source = { path = "../plugins/tauri-plugin-vault-source" }
@@ -47,6 +51,5 @@ tempfile = "3"
 [profile.release]
 lto = true
 codegen-units = 1
-panic = "abort"
 strip = true
 opt-level = "s"

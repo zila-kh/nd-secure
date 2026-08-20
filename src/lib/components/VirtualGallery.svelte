@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Film, ImageOff, LockKeyhole } from 'lucide-svelte';
   import { onDestroy, onMount } from 'svelte';
-  import { mediaUrl } from '../api';
+  import { thumbnailUrl } from '../api';
   import type { GalleryItem } from '../types';
 
   export let items: GalleryItem[] = [];
@@ -93,12 +93,12 @@
           {:else if failed.has(entry.item.id)}
             <div class="flex flex-col items-center gap-2 text-muted-foreground">
               <ImageOff size={28} />
-              <span class="text-xs">Unable to preview</span>
+              <span class="text-xs">Preview unavailable</span>
             </div>
           {:else}
             <img
-              src={mediaUrl(entry.item.id)}
-              alt="Encrypted gallery item"
+              src={thumbnailUrl(entry.item.id)}
+              alt="Encrypted gallery thumbnail"
               loading="lazy"
               decoding="async"
               class="h-full w-full object-cover"

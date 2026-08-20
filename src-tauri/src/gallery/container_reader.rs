@@ -18,7 +18,8 @@ impl ContainerReader {
         let metadata_plain_len = metadata_cipher_len
             .checked_sub(TAG_SIZE)
             .ok_or(VaultError::MalformedContainer)?;
-        let (metadata_ciphertext, metadata_tag_bytes) = encrypted_metadata.split_at_mut(metadata_plain_len);
+        let (metadata_ciphertext, metadata_tag_bytes) =
+            encrypted_metadata.split_at_mut(metadata_plain_len);
         let tag = Tag::from_slice(metadata_tag_bytes);
         let metadata_aad = metadata_aad(id, &header_bytes);
         cipher
@@ -29,8 +30,9 @@ impl ContainerReader {
                 tag,
             )
             .map_err(|_| VaultError::AuthenticationFailed)?;
-        let metadata: MediaMetadata = serde_json::from_slice(&encrypted_metadata[..metadata_plain_len])
-            .map_err(|_| VaultError::MalformedContainer)?;
+        let metadata: MediaMetadata =
+            serde_json::from_slice(&encrypted_metadata[..metadata_plain_len])
+                .map_err(|_| VaultError::MalformedContainer)?;
         if metadata.total_size != header.total_size || metadata.chunk_count != header.chunk_count {
             return Err(VaultError::AuthenticationFailed);
         }
@@ -46,23 +48,26 @@ impl ContainerReader {
             key,
             data_offset,
         };
-        let first_end = reader.header.total_size.min(CHUNK_SIZE as u64) - 1;
-        let first = reader.decrypt_range_unchecked(0, first_end)?;
+        let first = reader.decrypt_chunk(0)?;
         let detected = detect_mime(&first).ok_or(VaultError::UnsupportedMedia)?;
         if detected != reader.metadata.mime_type {
             return Err(VaultError::AuthenticationFailed);
         }
-        let recorded_signature = BASE64
-            .decode(reader.metadata.signature.as_bytes())
-            .map_err(|_| VaultError::MalformedContainer)?;
-        let expected_signature_len = usize::try_from(reader.header.total_size.min(SIGNATURE_BYTES as u64))
-            .map_err(|_| VaultError::MalformedContainer)?;
+        let recorded_signature = Zeroizing::new(
+            BASE64
+                .decode(reader.metadata.signature.as_bytes())
+                .map_err(|_| VaultError::MalformedContainer)?,
+        );
+        let expected_signature_len =
+            usize::try_from(reader.header.total_size.min(SIGNATURE_BYTES as u64))
+                .map_err(|_| VaultError::MalformedContainer)?;
         if recorded_signature.len() != expected_signature_len
             || first.len() < expected_signature_len
             || recorded_signature.as_slice() != &first[..expected_signature_len]
         {
             return Err(VaultError::AuthenticationFailed);
         }
+        reader.metadata.signature.zeroize();
         Ok(reader)
     }
 
@@ -70,7 +75,12 @@ impl ContainerReader {
         &self.metadata
     }
 
-    pub fn decrypt_range(&mut self, start: u64, end: u64, maximum_bytes: u64) -> Result<Vec<u8>> {
+    pub fn decrypt_range(
+        &mut self,
+        start: u64,
+        end: u64,
+        maximum_bytes: u64,
+    ) -> Result<Vec<u8>> {
         if start > end || end >= self.header.total_size {
             return Err(VaultError::InvalidRange);
         }
@@ -84,6 +94,30 @@ impl ContainerReader {
         self.decrypt_range_unchecked(start, end)
     }
 
+    pub fn decrypt_all_bounded(
+        &mut self,
+        maximum_bytes: u64,
+    ) -> Result<Zeroizing<Vec<u8>>> {
+        if self.header.total_size == 0 || self.header.total_size > maximum_bytes {
+            return Err(VaultError::RangeTooLarge);
+        }
+        let output_len = usize::try_from(self.header.total_size)
+            .map_err(|_| VaultError::RangeTooLarge)?;
+        let mut output = Zeroizing::new(Vec::new());
+        output
+            .try_reserve_exact(output_len)
+            .map_err(|_| VaultError::RangeTooLarge)?;
+
+        for index in 0..self.header.chunk_count {
+            let plaintext = self.decrypt_chunk(index)?;
+            output.extend_from_slice(plaintext.as_slice());
+        }
+        if output.len() != output_len {
+            return Err(VaultError::MalformedContainer);
+        }
+        Ok(output)
+    }
+
     pub fn verify_all(&mut self) -> Result<()> {
         for index in 0..self.header.chunk_count {
             let _ = self.decrypt_chunk(index)?;
@@ -95,7 +129,10 @@ impl ContainerReader {
         let first_chunk = start / CHUNK_SIZE as u64;
         let last_chunk = end / CHUNK_SIZE as u64;
         let output_len = usize::try_from(end - start + 1).map_err(|_| VaultError::RangeTooLarge)?;
-        let mut output = Vec::with_capacity(output_len);
+        let mut output = Vec::new();
+        output
+            .try_reserve_exact(output_len)
+            .map_err(|_| VaultError::RangeTooLarge)?;
 
         for index in first_chunk..=last_chunk {
             let plaintext = self.decrypt_chunk(index)?;
@@ -121,7 +158,11 @@ impl ContainerReader {
         let record_stride = (CHUNK_SIZE + TAG_SIZE) as u64;
         let offset = self
             .data_offset
-            .checked_add(index.checked_mul(record_stride).ok_or(VaultError::MalformedContainer)?)
+            .checked_add(
+                index
+                    .checked_mul(record_stride)
+                    .ok_or(VaultError::MalformedContainer)?,
+            )
             .ok_or(VaultError::MalformedContainer)?;
         self.file.seek(SeekFrom::Start(offset))?;
         let mut encrypted = Zeroizing::new(vec![0_u8; plain_len + TAG_SIZE]);
@@ -151,4 +192,3 @@ impl ContainerReader {
         Ok(encrypted)
     }
 }
-

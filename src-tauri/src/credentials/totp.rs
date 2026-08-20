@@ -23,9 +23,7 @@ pub struct TotpCode {
 pub fn validate_totp_secret(secret: &str) -> Result<()> {
     let decoded = decode_secret(secret)?;
     if decoded.len() < 10 || decoded.len() > 128 {
-        return Err(VaultError::InvalidInput(
-            "TOTP secret must decode to between 10 and 128 bytes".into(),
-        ));
+        return Err(VaultError::InvalidInput("TOTP secret must decode to between 10 and 128 bytes".into()));
     }
     Ok(())
 }
@@ -46,10 +44,7 @@ pub fn generate_totp(secret: &str) -> Result<TotpCode> {
         | (u32::from(digest[offset + 2]) << 8)
         | u32::from(digest[offset + 3]);
     let code = binary % 10_u32.pow(DIGITS);
-    Ok(TotpCode {
-        code: format!("{code:06}"),
-        remaining_seconds: PERIOD - (now % PERIOD),
-    })
+    Ok(TotpCode { code: format!("{code:06}"), remaining_seconds: PERIOD - (now % PERIOD) })
 }
 
 fn decode_secret(secret: &str) -> Result<Zeroizing<Vec<u8>>> {

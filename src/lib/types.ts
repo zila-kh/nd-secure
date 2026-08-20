@@ -4,6 +4,7 @@ export interface SessionStatus {
   initialized: boolean;
   locked: boolean;
   autoLockSeconds: number;
+  deleteSourceAfterImport: boolean;
 }
 
 export interface GalleryItem {
@@ -14,11 +15,25 @@ export interface GalleryItem {
   width?: number | null;
   height?: number | null;
   durationMs?: number | null;
+  thumbnailAvailable: boolean;
 }
 
 export interface GalleryPage {
   items: GalleryItem[];
   nextCursor?: string | null;
+}
+
+export interface ImportMediaItemResult {
+  sourceIndex: number;
+  id?: string | null;
+  sourceRemoved: boolean;
+  warning?: string | null;
+  error?: string | null;
+}
+
+export interface ImportMediaResult {
+  items: ImportMediaItemResult[];
+  sourceRemovalEnabled: boolean;
 }
 
 export type CredentialType = 'login' | 'secure_note' | 'totp';

@@ -5,6 +5,7 @@ import type {
   CredentialPage,
   GalleryPage,
   GeneratedPassword,
+  ImportMediaResult,
   SessionStatus,
   TotpCode
 } from './types';
@@ -20,10 +21,12 @@ export const vaultApi = {
   lock: () => invoke<SessionStatus>('lock_vault'),
   setAutoLock: (autoLockSeconds: number) =>
     invoke<SessionStatus>('set_auto_lock', { autoLockSeconds }),
+  setDeleteSourceAfterImport: (enabled: boolean) =>
+    invoke<SessionStatus>('set_delete_source_after_import', { enabled }),
 
   galleryPage: (cursor: string | null = null, limit = 100) =>
     invoke<GalleryPage>('gallery_page', { cursor, limit }),
-  importMedia: (sources: string[]) => invoke<string[]>('import_media', { sources }),
+  importMedia: (sources: string[]) => invoke<ImportMediaResult>('import_media', { sources }),
   deleteMedia: (id: string) => invoke<void>('delete_media', { id }),
 
   credentialPage: (cursor: string | null = null, limit = 100, search = '') =>
@@ -41,4 +44,8 @@ export const vaultApi = {
 
 export function mediaUrl(id: string): string {
   return convertFileSrc(`/media/${id}`, 'vault');
+}
+
+export function thumbnailUrl(id: string): string {
+  return convertFileSrc(`/thumbnail/${id}`, 'vault');
 }

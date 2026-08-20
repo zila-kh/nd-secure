@@ -17,10 +17,7 @@ use tauri::{
 };
 
 use crate::{
-    credentials::CredentialRepository,
-    gallery::GalleryRepository,
-    paths::VaultPaths,
-    session::SessionState,
+    credentials::CredentialRepository, gallery::GalleryRepository, paths::VaultPaths, session::SessionState,
     state::AppState,
 };
 
@@ -54,10 +51,8 @@ pub fn run() {
             });
         })
         .on_window_event(|window, event| {
-            let should_lock = matches!(
-                event,
-                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
-            );
+            let should_lock =
+                matches!(event, tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed);
             #[cfg(mobile)]
             let should_lock = should_lock || matches!(event, tauri::WindowEvent::Suspended);
 
@@ -68,6 +63,11 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            #[cfg(desktop)]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_content_protected(true);
+            }
+
             let local_data = app.path().app_local_data_dir()?;
             let paths = VaultPaths::new(&local_data);
             paths.create_all()?;
@@ -76,6 +76,7 @@ pub fn run() {
             let gallery = Arc::new(GalleryRepository::new(
                 paths.gallery_db.clone(),
                 paths.gallery_objects.clone(),
+                paths.gallery_thumbnails.clone(),
             )?);
             let credentials = Arc::new(CredentialRepository::new(paths.credentials_db.clone())?);
             let state = AppState::new(session, gallery, credentials);
@@ -96,6 +97,7 @@ pub fn run() {
             commands::unlock_vault,
             commands::lock_vault,
             commands::set_auto_lock,
+            commands::set_delete_source_after_import,
             commands::gallery_page,
             commands::import_media,
             commands::delete_media,

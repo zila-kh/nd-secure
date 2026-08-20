@@ -3,11 +3,7 @@ use std::sync::{
     Arc,
 };
 
-use crate::{
-    credentials::CredentialRepository,
-    gallery::GalleryRepository,
-    session::SessionState,
-};
+use crate::{credentials::CredentialRepository, gallery::GalleryRepository, session::SessionState};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -44,9 +40,7 @@ impl AppState {
                 .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                return Some(ProtocolPermit {
-                    active: Arc::clone(&self.protocol_active),
-                });
+                return Some(ProtocolPermit { active: Arc::clone(&self.protocol_active) });
             }
         }
     }

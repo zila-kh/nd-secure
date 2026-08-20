@@ -14,7 +14,7 @@ pub enum Error {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct OpenSourceRequest {
+struct SourceRequest {
     uri: String,
 }
 
@@ -25,15 +25,25 @@ pub struct OpenSourceResponse {
     pub size: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteSourceResponse {
+    deleted: bool,
+}
+
 const PLUGIN_IDENTIFIER: &str = "kh.zila.ndsecure.vaultsource";
 
 pub struct VaultSource<R: Runtime>(PluginHandle<R>);
 
 impl<R: Runtime> VaultSource<R> {
     pub fn open_source(&self, uri: String) -> Result<OpenSourceResponse> {
-        self.0
-            .run_mobile_plugin("openSource", OpenSourceRequest { uri })
-            .map_err(Into::into)
+        self.0.run_mobile_plugin("openSource", SourceRequest { uri }).map_err(Into::into)
+    }
+
+    pub fn delete_source(&self, uri: String) -> Result<bool> {
+        let response: DeleteSourceResponse =
+            self.0.run_mobile_plugin("deleteSource", SourceRequest { uri })?;
+        Ok(response.deleted)
     }
 }
 

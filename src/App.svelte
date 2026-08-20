@@ -12,7 +12,8 @@
   let status: SessionStatus = {
     initialized: false,
     locked: true,
-    autoLockSeconds: 300
+    autoLockSeconds: 300,
+    deleteSourceAfterImport: false
   };
   let view: VaultView = 'gallery';
   let loading = true;

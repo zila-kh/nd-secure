@@ -1,6 +1,6 @@
 <script lang="ts">
   import { open } from '@tauri-apps/plugin-dialog';
-  import { LoaderCircle, Plus, RefreshCw, Trash2, X } from 'lucide-svelte';
+  import { CheckCircle2, LoaderCircle, Plus, RefreshCw, Trash2, X } from 'lucide-svelte';
   import { onMount } from 'svelte';
   import { mediaUrl, vaultApi } from '../api';
   import type { GalleryItem } from '../types';
@@ -13,12 +13,15 @@
   let importing = false;
   let hasMore = true;
   let error = '';
+  let notice = '';
   let selected: GalleryItem | null = null;
+  let galleryRevision = 0;
 
   async function refresh() {
     items = [];
     cursor = null;
     hasMore = true;
+    galleryRevision += 1;
     await loadMore();
   }
 
@@ -59,9 +62,27 @@
 
     importing = true;
     error = '';
+    notice = '';
     try {
-      await vaultApi.importMedia(sources);
-      await refresh();
+      const importResult = await vaultApi.importMedia(sources);
+      const successful = importResult.items.filter((item) => item.id);
+      const failed = importResult.items.filter((item) => item.error);
+      const warnings = importResult.items.filter((item) => item.warning);
+      const removed = importResult.items.filter((item) => item.sourceRemoved).length;
+
+      if (successful.length > 0) await refresh();
+
+      const sourceSummary = importResult.sourceRemovalEnabled
+        ? `${removed} verified original${removed === 1 ? '' : 's'} removed; all others were retained.`
+        : 'Original source files were kept.';
+      notice = `${successful.length} of ${sources.length} item${sources.length === 1 ? '' : 's'} imported. ${sourceSummary}`;
+
+      const messages = [
+        ...failed.map((item) => `File ${item.sourceIndex + 1}: ${item.error}`),
+        ...warnings.map((item) => `File ${item.sourceIndex + 1}: ${item.warning}`)
+      ];
+      error = messages.slice(0, 5).join(' ');
+      if (messages.length > 5) error += ` ${messages.length - 5} additional warning${messages.length - 5 === 1 ? '' : 's'} not shown.`;
     } catch (cause) {
       error = String(cause);
     } finally {
@@ -71,9 +92,10 @@
 
   async function removeSelected() {
     if (!selected) return;
+    const selectedId = selected.id;
     try {
-      await vaultApi.deleteMedia(selected.id);
-      items = items.filter((item) => item.id !== selected?.id);
+      await vaultApi.deleteMedia(selectedId);
+      items = items.filter((item) => item.id !== selectedId);
       selected = null;
     } catch (cause) {
       error = String(cause);
@@ -93,7 +115,7 @@
   <header class="flex flex-wrap items-center justify-between gap-3">
     <div>
       <h2 class="text-2xl font-semibold tracking-tight">Gallery Vault</h2>
-      <p class="text-sm text-muted-foreground">Chunk-encrypted media stored under opaque identifiers.</p>
+      <p class="text-sm text-muted-foreground">Encrypted originals with separately encrypted, pre-generated image thumbnails.</p>
     </div>
     <div class="flex gap-2">
       <Button variant="secondary" size="sm" on:click={refresh} disabled={loading}>
@@ -106,12 +128,21 @@
     </div>
   </header>
 
+  {#if notice}
+    <div class="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm">
+      <CheckCircle2 size={17} class="mt-0.5 shrink-0 text-primary" />
+      <span>{notice}</span>
+    </div>
+  {/if}
+
   {#if error}
     <div class="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>
   {/if}
 
   <div class="min-h-0 flex-1">
-    <VirtualGallery {items} onOpen={(item) => (selected = item)} onNearEnd={loadMore} />
+    {#key galleryRevision}
+      <VirtualGallery {items} onOpen={(item) => (selected = item)} onNearEnd={loadMore} />
+    {/key}
   </div>
 
   {#if loading && items.length > 0}
