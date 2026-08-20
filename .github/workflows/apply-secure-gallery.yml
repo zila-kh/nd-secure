@@ -1,4 +1,4 @@
-name: Inspect legacy thumbnail backfill
+name: Inspect thumbnail generator
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  inspect-backfill:
+  inspect-generator:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0
           ref: agent/encrypted-thumbnails-safe-import-bootstrap
 
-      - name: Extract and inspect legacy thumbnail code
+      - name: Extract and inspect thumbnail generator
         shell: bash
         run: |
           set -euo pipefail
@@ -30,41 +30,5 @@ jobs:
           echo "1835996f4ccfc7825d077474ab0db04a2dc651f7b94fa0cb277a7f61dce30777  /tmp/nd-secure-feature.tar.gz" | sha256sum -c -
           tar -xzf /tmp/nd-secure-feature.tar.gz
           rm -f /tmp/nd-secure-feature.tar.gz
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("src-tauri/src/gallery/repository.rs")
-          lines = path.read_text(encoding="utf-8").splitlines()
-          terms = (
-              "missing_legacy_thumbnail",
-              "backfill",
-              "thumbnail_width",
-              "thumbnail_height",
-              "thumbnail_dimensions",
-              "ensure_thumbnail",
-              "generate_thumbnail",
-          )
-
-          matched = []
-          for index, line in enumerate(lines):
-              if any(term in line for term in terms):
-                  matched.append(index)
-
-          print("=== matching lines ===")
-          for index in matched:
-              print(f"{index + 1}: {lines[index]}")
-
-          print("=== contextual source ===")
-          emitted = set()
-          for index in matched:
-              start = max(0, index - 45)
-              end = min(len(lines), index + 70)
-              for line_number in range(start, end):
-                  if line_number not in emitted:
-                      print(f"{line_number + 1:04d}: {lines[line_number]}")
-                      emitted.add(line_number)
-              print("---")
-          PY
-
+          nl -ba src-tauri/src/gallery/thumbnail.rs
           exit 1
