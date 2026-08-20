@@ -27,16 +27,23 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22"
-      - name: Regenerate lockfile from a clean graph
+      - name: Use npm 11 resolver
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global npm@11
+          npm --version
+      - name: Regenerate lockfile from a clean installed graph
         shell: bash
         run: |
           set -euo pipefail
           rm -rf node_modules package-lock.json
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm install --ignore-scripts --no-audit --no-fund
       - name: Verify clean install and frontend
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf node_modules
           npm ci --no-audit --no-fund
           npm run lint
           npm run build
@@ -141,10 +148,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
-          ndk_home="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -n 1)"
-          [[ -n "$ndk_home" ]] || { echo "No Android NDK installation was found." >&2; exit 1; }
+          sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          [[ -n "$sdk_root" ]] || { echo "Android SDK root is not configured." >&2; exit 1; }
+          sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager_bin" ]]; then
+            sdkmanager_bin="$(find "$sdk_root/cmdline-tools" -type f -path '*/bin/sdkmanager' -print | sort -V | tail -n 1)"
+          fi
+          [[ -x "$sdkmanager_bin" ]] || { echo "sdkmanager was not found under $sdk_root." >&2; exit 1; }
+          yes | "$sdkmanager_bin" --licenses >/dev/null 2>&1 || true
+          "$sdkmanager_bin" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          ndk_home="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-}}"
+          if [[ -z "$ndk_home" || ! -d "$ndk_home" ]]; then
+            ndk_home="$(find "$sdk_root/ndk" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -n 1)"
+          fi
+          [[ -n "$ndk_home" && -d "$ndk_home" ]] || { echo "No Android NDK installation was found." >&2; exit 1; }
+          echo "ANDROID_NDK_HOME=$ndk_home" >> "$GITHUB_ENV"
           echo "NDK_HOME=$ndk_home" >> "$GITHUB_ENV"
       - run: npm ci --no-audit --no-fund
       - name: Initialize Android project
