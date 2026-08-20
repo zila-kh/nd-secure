@@ -115,7 +115,9 @@ impl MediaServer {
     }
 
     pub fn revoke_media(&self, media_id: Uuid) {
-        self.grants.lock().retain(|_, grant| grant.media_id != media_id);
+        self.grants
+            .lock()
+            .retain(|_, grant| grant.media_id != media_id);
     }
 
     pub fn revoke_all(&self) {
@@ -350,21 +352,27 @@ fn handle_connection(
 
     let content_length = end - start + 1;
     let content_length_value = content_length.to_string();
-    let mut owned_content_range = None;
-    if status.starts_with("206") {
-        owned_content_range = Some(format!("bytes {start}-{end}/{}", metadata.total_size));
-    }
+    let content_range_value = if status.starts_with("206") {
+        Some(format!("bytes {start}-{end}/{}", metadata.total_size))
+    } else {
+        None
+    };
     let mut headers = vec![
         ("Content-Type", metadata.mime_type.as_str()),
         ("Accept-Ranges", "bytes"),
         ("Content-Length", content_length_value.as_str()),
-        ("Access-Control-Expose-Headers", "Accept-Ranges, Content-Length, Content-Range"),
+        (
+            "Access-Control-Expose-Headers",
+            "Accept-Ranges, Content-Length, Content-Range",
+        ),
     ];
-    if let Some(value) = owned_content_range.as_deref() {
+    if let Some(value) = content_range_value.as_deref() {
         headers.push(("Content-Range", value));
     }
 
-    if write_response_head(&mut stream, status, origin, &headers).is_err() || request.method == "HEAD" {
+    if write_response_head(&mut stream, status, origin, &headers).is_err()
+        || request.method == "HEAD"
+    {
         return;
     }
 
@@ -396,15 +404,19 @@ fn authorize_grant(
 ) -> bool {
     let mut grants = grants.lock();
     let now = Instant::now();
-    let Some(grant) = grants.get_mut(digest) else {
+    let Some(grant) = grants.get(digest).copied() else {
         return false;
     };
     if grant.media_id != media_id || grant.expires_at <= now {
         grants.remove(digest);
         return false;
     }
-    grant.expires_at = now + Duration::from_secs(GRANT_TTL_SECONDS);
-    true
+    if let Some(grant) = grants.get_mut(digest) {
+        grant.expires_at = now + Duration::from_secs(GRANT_TTL_SECONDS);
+        true
+    } else {
+        false
+    }
 }
 
 fn read_request(stream: &mut TcpStream) -> std::io::Result<ParsedRequest> {
@@ -431,11 +443,17 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<ParsedRequest> {
     };
 
     let head = std::str::from_utf8(&buffer[..header_end]).map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "HTTP request headers are not UTF-8")
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "HTTP request headers are not UTF-8",
+        )
     })?;
     let mut lines = head.split("\r\n");
     let request_line = lines.next().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "HTTP request line is missing")
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "HTTP request line is missing",
+        )
     })?;
     let mut request_parts = request_line.split_ascii_whitespace();
     let method = request_parts.next().unwrap_or_default();
@@ -460,7 +478,7 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<ParsedRequest> {
     let mut transfer_encoding = false;
 
     for line in lines {
-        if line.is_empty() || line.starts_with([' ', '\t']) {
+        if line.is_empty() || line.starts_with(' ') || line.starts_with('\t') {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "invalid HTTP header line",
@@ -510,7 +528,10 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<ParsedRequest> {
         ));
     }
     let host = host.ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "Host header is required")
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Host header is required",
+        )
     })?;
 
     Ok(ParsedRequest {
@@ -542,7 +563,11 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 }
 
 fn parse_target(target: &str) -> Option<(&str, Uuid)> {
-    if target.contains(['?', '%', '\\']) || target.contains("..") {
+    if target.contains('?')
+        || target.contains('%')
+        || target.contains('\\')
+        || target.contains("..")
+    {
         return None;
     }
     let parts: Vec<_> = target.split('/').collect();
@@ -673,7 +698,7 @@ fn hex_nibble(byte: u8) -> Option<u8> {
 fn token_digest(raw: &[u8; TOKEN_BYTES]) -> [u8; 32] {
     let digest = Sha256::digest(raw);
     let mut output = [0_u8; 32];
-    output.copy_from_slice(digest.as_slice());
+    output.copy_from_slice(&digest);
     output
 }
 
