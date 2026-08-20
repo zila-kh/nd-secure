@@ -83,6 +83,10 @@ jobs:
               path.write_text(content.replace(old, new), encoding="utf-8")
           PY
 
+          # GitHub's workflow token may not publish workflow-file changes. Keep
+          # the validated source commit workflow-neutral; CI is finalized through
+          # the repository API after this source-only commit lands.
+          git restore --source=HEAD --worktree -- .github/workflows
           rm -rf .github/nd-secure-bootstrap
           test -f src-tauri/src/gallery/thumbnail.rs
           test -f src/lib/components/SettingsView.svelte
