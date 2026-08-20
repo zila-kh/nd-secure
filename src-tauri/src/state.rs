@@ -46,9 +46,7 @@ impl AppState {
                 .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                return Some(ProtocolPermit {
-                    active: Arc::clone(&self.protocol_active),
-                });
+                return Some(ProtocolPermit { active: Arc::clone(&self.protocol_active) });
             }
         }
     }
