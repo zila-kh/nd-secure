@@ -26,7 +26,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cp .github/nd-secure-bootstrap/final-ci.yml /tmp/final-ci.yml
           cat .github/nd-secure-bootstrap/part* | tr -d '\n' | base64 --decode > /tmp/nd-secure-feature.tar.gz
           echo "1835996f4ccfc7825d077474ab0db04a2dc651f7b94fa0cb277a7f61dce30777  /tmp/nd-secure-feature.tar.gz" | sha256sum -c -
           tar -xzf /tmp/nd-secure-feature.tar.gz
@@ -84,10 +83,7 @@ jobs:
               path.write_text(content.replace(old, new), encoding="utf-8")
           PY
 
-          cp /tmp/final-ci.yml .github/workflows/ci.yml
-          rm -f /tmp/final-ci.yml
           rm -rf .github/nd-secure-bootstrap
-          rm .github/workflows/apply-secure-gallery.yml
           test -f src-tauri/src/gallery/thumbnail.rs
           test -f src/lib/components/SettingsView.svelte
           test -f SECURITY.md
@@ -146,7 +142,7 @@ jobs:
           test -f package-lock.json
           test -f src-tauri/Cargo.lock
           ! test -e .github/nd-secure-bootstrap
-          ! test -e .github/workflows/apply-secure-gallery.yml
+          git diff --exit-code -- .github/workflows
 
       - name: Commit validated implementation
         shell: bash
@@ -157,6 +153,10 @@ jobs:
           git add -A
           if git diff --cached --quiet; then
             echo "Validation produced no implementation changes." >&2
+            exit 1
+          fi
+          if ! git diff --cached --quiet -- .github/workflows; then
+            echo "Refusing to publish workflow-file changes through GITHUB_TOKEN." >&2
             exit 1
           fi
           git commit -m "feat: add encrypted thumbnails and verified source handling"
