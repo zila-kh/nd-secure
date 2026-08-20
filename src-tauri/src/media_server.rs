@@ -83,26 +83,18 @@ impl MediaServer {
             }
             grants.insert(
                 digest,
-                StreamGrant {
-                    media_id,
-                    expires_at: now + Duration::from_secs(GRANT_TTL_SECONDS),
-                },
+                StreamGrant { media_id, expires_at: now + Duration::from_secs(GRANT_TTL_SECONDS) },
             );
             drop(grants);
 
             let token = encode_token(&random);
             random.zeroize();
-            let url = format!(
-                "http://127.0.0.1:{}/v1/{token}/media/{media_id}",
-                self.port
-            );
+            let url = format!("http://127.0.0.1:{}/v1/{token}/media/{media_id}", self.port);
             return Ok((url, token));
         }
 
         random.zeroize();
-        Err(VaultError::Platform(
-            "unable to allocate an encrypted media stream capability".into(),
-        ))
+        Err(VaultError::Platform("unable to allocate an encrypted media stream capability".into()))
     }
 
     pub fn revoke(&self, token: &str) {
@@ -115,9 +107,7 @@ impl MediaServer {
     }
 
     pub fn revoke_media(&self, media_id: Uuid) {
-        self.grants
-            .lock()
-            .retain(|_, grant| grant.media_id != media_id);
+        self.grants.lock().retain(|_, grant| grant.media_id != media_id);
     }
 
     pub fn revoke_all(&self) {
@@ -141,12 +131,7 @@ fn accept_loop(
                     continue;
                 }
                 if !try_acquire_connection(active.as_ref()) {
-                    let _ = write_empty_response(
-                        &mut stream,
-                        "503 Service Unavailable",
-                        None,
-                        &[],
-                    );
+                    let _ = write_empty_response(&mut stream, "503 Service Unavailable", None, &[]);
                     continue;
                 }
 
@@ -154,17 +139,10 @@ fn accept_loop(
                 let worker_session = Arc::clone(&session);
                 let worker_gallery = Arc::clone(&gallery);
                 let worker_grants = Arc::clone(&grants);
-                let spawn_result = thread::Builder::new()
-                    .name("nd-vault-media-stream".into())
-                    .spawn(move || {
+                let spawn_result =
+                    thread::Builder::new().name("nd-vault-media-stream".into()).spawn(move || {
                         let _permit = ConnectionPermit(worker_active);
-                        handle_connection(
-                            stream,
-                            port,
-                            worker_session,
-                            worker_gallery,
-                            worker_grants,
-                        );
+                        handle_connection(stream, port, worker_session, worker_gallery, worker_grants);
                     });
                 if spawn_result.is_err() {
                     active.fetch_sub(1, Ordering::AcqRel);
@@ -184,10 +162,7 @@ fn try_acquire_connection(active: &AtomicUsize) -> bool {
         if current >= MAX_CONNECTIONS {
             return false;
         }
-        if active
-            .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
+        if active.compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire).is_ok() {
             return true;
         }
     }
@@ -217,12 +192,8 @@ fn handle_connection(
     gallery: Arc<GalleryRepository>,
     grants: Arc<Mutex<HashMap<[u8; 32], StreamGrant>>>,
 ) {
-    if stream
-        .set_read_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECONDS)))
-        .is_err()
-        || stream
-            .set_write_timeout(Some(Duration::from_secs(WRITE_TIMEOUT_SECONDS)))
-            .is_err()
+    if stream.set_read_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECONDS))).is_err()
+        || stream.set_write_timeout(Some(Duration::from_secs(WRITE_TIMEOUT_SECONDS))).is_err()
     {
         return;
     }
@@ -361,18 +332,13 @@ fn handle_connection(
         ("Content-Type", metadata.mime_type.as_str()),
         ("Accept-Ranges", "bytes"),
         ("Content-Length", content_length_value.as_str()),
-        (
-            "Access-Control-Expose-Headers",
-            "Accept-Ranges, Content-Length, Content-Range",
-        ),
+        ("Access-Control-Expose-Headers", "Accept-Ranges, Content-Length, Content-Range"),
     ];
     if let Some(value) = content_range_value.as_deref() {
         headers.push(("Content-Range", value));
     }
 
-    if write_response_head(&mut stream, status, origin, &headers).is_err()
-        || request.method == "HEAD"
-    {
+    if write_response_head(&mut stream, status, origin, &headers).is_err() || request.method == "HEAD" {
         return;
     }
 
@@ -443,17 +409,11 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<ParsedRequest> {
     };
 
     let head = std::str::from_utf8(&buffer[..header_end]).map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "HTTP request headers are not UTF-8",
-        )
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "HTTP request headers are not UTF-8")
     })?;
     let mut lines = head.split("\r\n");
     let request_line = lines.next().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "HTTP request line is missing",
-        )
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "HTTP request line is missing")
     })?;
     let mut request_parts = request_line.split_ascii_whitespace();
     let method = request_parts.next().unwrap_or_default();
@@ -465,10 +425,7 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<ParsedRequest> {
         || request_parts.next().is_some()
         || !matches!(version, "HTTP/1.1" | "HTTP/1.0")
     {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "invalid HTTP request line",
-        ));
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid HTTP request line"));
     }
 
     let mut host = None;
@@ -479,23 +436,13 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<ParsedRequest> {
 
     for line in lines {
         if line.is_empty() || line.starts_with(' ') || line.starts_with('\t') {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "invalid HTTP header line",
-            ));
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid HTTP header line"));
         }
-        let (name, raw_value) = line.split_once(':').ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid HTTP header")
-        })?;
-        if name.is_empty()
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "invalid HTTP header name",
-            ));
+        let (name, raw_value) = line
+            .split_once(':')
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid HTTP header"))?;
+        if name.is_empty() || !name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid HTTP header name"));
         }
         let value = raw_value.trim();
         if name.eq_ignore_ascii_case("host") {
@@ -512,47 +459,20 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<ParsedRequest> {
     }
 
     if transfer_encoding {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "request bodies are not supported",
-        ));
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "request bodies are not supported"));
     }
-    if content_length
-        .as_deref()
-        .map(|value| value != "0")
-        .unwrap_or(false)
-    {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "request bodies are not supported",
-        ));
+    if content_length.as_deref().map(|value| value != "0").unwrap_or(false) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "request bodies are not supported"));
     }
-    let host = host.ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Host header is required",
-        )
-    })?;
+    let host =
+        host.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Host header is required"))?;
 
-    Ok(ParsedRequest {
-        method: method.to_owned(),
-        target: target.to_owned(),
-        host,
-        range,
-        origin,
-    })
+    Ok(ParsedRequest { method: method.to_owned(), target: target.to_owned(), host, range, origin })
 }
 
-fn set_once(
-    destination: &mut Option<String>,
-    value: &str,
-    maximum_bytes: usize,
-) -> std::io::Result<()> {
+fn set_once(destination: &mut Option<String>, value: &str, maximum_bytes: usize) -> std::io::Result<()> {
     if destination.is_some() || value.is_empty() || value.len() > maximum_bytes {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "invalid or repeated HTTP header",
-        ));
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid or repeated HTTP header"));
     }
     *destination = Some(value.to_owned());
     Ok(())
@@ -563,11 +483,7 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 }
 
 fn parse_target(target: &str) -> Option<(&str, Uuid)> {
-    if target.contains('?')
-        || target.contains('%')
-        || target.contains('\\')
-        || target.contains("..")
-    {
+    if target.contains('?') || target.contains('%') || target.contains('\\') || target.contains("..") {
         return None;
     }
     let parts: Vec<_> = target.split('/').collect();
@@ -604,11 +520,7 @@ fn parse_range(value: &str, total: u64) -> std::result::Result<(u64, u64), ()> {
     if start >= total {
         return Err(());
     }
-    let end = if right.is_empty() {
-        total - 1
-    } else {
-        right.parse::<u64>().map_err(|_| ())?.min(total - 1)
-    };
+    let end = if right.is_empty() { total - 1 } else { right.parse::<u64>().map_err(|_| ())?.min(total - 1) };
     if end < start {
         return Err(());
     }
