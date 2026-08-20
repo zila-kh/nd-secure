@@ -31,6 +31,33 @@ jobs:
           echo "1835996f4ccfc7825d077474ab0db04a2dc651f7b94fa0cb277a7f61dce30777  /tmp/nd-secure-feature.tar.gz" | sha256sum -c -
           tar -xzf /tmp/nd-secure-feature.tar.gz
           rm -f /tmp/nd-secure-feature.tar.gz
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = (
+              (
+                  Path("src-tauri/src/gallery/mod.rs"),
+                  "pub use repository::{GalleryItem, GalleryObject, GalleryPage, GalleryRepository};",
+                  "pub use repository::{GalleryObject, GalleryPage, GalleryRepository};",
+              ),
+              (
+                  Path("src-tauri/src/protocol.rs"),
+                  ".header(CONTENT_TYPE, metadata.mime_type)",
+                  ".header(CONTENT_TYPE, metadata.mime_type.as_str())",
+              ),
+          )
+
+          for path, old, new in replacements:
+              content = path.read_text(encoding="utf-8")
+              count = content.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f"expected exactly one compiler-fix target in {path}, found {count}"
+                  )
+              path.write_text(content.replace(old, new), encoding="utf-8")
+          PY
+
           cp /tmp/final-ci.yml .github/workflows/ci.yml
           rm -f /tmp/final-ci.yml
           rm -rf .github/nd-secure-bootstrap
