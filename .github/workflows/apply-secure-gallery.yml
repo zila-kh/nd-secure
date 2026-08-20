@@ -1,4 +1,4 @@
-name: Apply and validate secure gallery implementation
+name: Inspect legacy thumbnail backfill
 
 on:
   workflow_dispatch:
@@ -6,27 +6,26 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: secure-gallery-bootstrap
   cancel-in-progress: true
 
 jobs:
-  apply-and-validate:
+  inspect-backfill:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
           ref: agent/encrypted-thumbnails-safe-import-bootstrap
 
-      - name: Verify and apply implementation archive
+      - name: Extract and inspect legacy thumbnail code
         shell: bash
         run: |
           set -euo pipefail
-          cp .github/nd-secure-bootstrap/final-ci.yml /tmp/final-ci.yml
           cat .github/nd-secure-bootstrap/part* | tr -d '\n' | base64 --decode > /tmp/nd-secure-feature.tar.gz
           echo "1835996f4ccfc7825d077474ab0db04a2dc651f7b94fa0cb277a7f61dce30777  /tmp/nd-secure-feature.tar.gz" | sha256sum -c -
           tar -xzf /tmp/nd-secure-feature.tar.gz
@@ -35,123 +34,37 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          replacements = (
-              (
-                  Path("src-tauri/src/gallery/mod.rs"),
-                  "pub use repository::{GalleryItem, GalleryObject, GalleryPage, GalleryRepository};",
-                  "pub use repository::{GalleryObject, GalleryPage, GalleryRepository};",
-                  1,
-              ),
-              (
-                  Path("src-tauri/src/protocol.rs"),
-                  ".header(CONTENT_TYPE, metadata.mime_type)",
-                  ".header(CONTENT_TYPE, metadata.mime_type.as_str())",
-                  1,
-              ),
-              (
-                  Path("src-tauri/src/gallery/container_helpers.rs"),
-                  "(total_size + CHUNK_SIZE as u64 - 1) / CHUNK_SIZE as u64",
-                  "total_size.div_ceil(CHUNK_SIZE as u64)",
-                  1,
-              ),
-              (
-                  Path("src-tauri/src/session.rs"),
-                  "derive_domain_key(&*unlocked.master_key, domain)?",
-                  "derive_domain_key(&unlocked.master_key, domain)?",
-                  1,
-              ),
-              (
-                  Path("src-tauri/src/source.rs"),
-                  "    drop(reader);\n",
-                  "",
-                  2,
-              ),
+          path = Path("src-tauri/src/gallery/repository.rs")
+          lines = path.read_text(encoding="utf-8").splitlines()
+          terms = (
+              "missing_legacy_thumbnail",
+              "backfill",
+              "thumbnail_width",
+              "thumbnail_height",
+              "thumbnail_dimensions",
+              "ensure_thumbnail",
+              "generate_thumbnail",
           )
 
-          for path, old, new, expected_count in replacements:
-              content = path.read_text(encoding="utf-8")
-              count = content.count(old)
-              if count != expected_count:
-                  raise SystemExit(
-                      f"expected {expected_count} compiler-fix target(s) in {path}, found {count}"
-                  )
-              path.write_text(content.replace(old, new), encoding="utf-8")
+          matched = []
+          for index, line in enumerate(lines):
+              if any(term in line for term in terms):
+                  matched.append(index)
+
+          print("=== matching lines ===")
+          for index in matched:
+              print(f"{index + 1}: {lines[index]}")
+
+          print("=== contextual source ===")
+          emitted = set()
+          for index in matched:
+              start = max(0, index - 45)
+              end = min(len(lines), index + 70)
+              for line_number in range(start, end):
+                  if line_number not in emitted:
+                      print(f"{line_number + 1:04d}: {lines[line_number]}")
+                      emitted.add(line_number)
+              print("---")
           PY
 
-          cp /tmp/final-ci.yml .github/workflows/ci.yml
-          rm -f /tmp/final-ci.yml
-          rm -rf .github/nd-secure-bootstrap
-          rm .github/workflows/apply-secure-gallery.yml
-          test -f src-tauri/src/gallery/thumbnail.rs
-          test -f src/lib/components/SettingsView.svelte
-          test -f SECURITY.md
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: "22"
-
-      - name: Install Rust toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup default stable
-
-      - name: Install frontend dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Format Rust
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo fmt --manifest-path src-tauri/Cargo.toml --all
-          cargo fmt --manifest-path plugins/tauri-plugin-vault-source/Cargo.toml --all
-
-      - name: Validate frontend
-        run: |
-          npm run lint
-          npm run build
-
-      - name: Install Linux prerequisites
-        shell: bash
-        env:
-          DEBIAN_FRONTEND: noninteractive
-          NEEDRESTART_MODE: a
-        run: |
-          set -euo pipefail
-          sudo -E apt-get -o Dpkg::Use-Pty=0 update
-          sudo -E apt-get -o Dpkg::Use-Pty=0 install -y --no-install-recommends \
-            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
-            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget xdg-utils
-
-      - name: Validate Rust
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-          cargo check --manifest-path src-tauri/Cargo.toml --all-targets
-          cargo test --manifest-path src-tauri/Cargo.toml
-
-      - name: Validate patch hygiene
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --check
-          test -f package-lock.json
-          test -f src-tauri/Cargo.lock
-          ! test -e .github/nd-secure-bootstrap
-          ! test -e .github/workflows/apply-secure-gallery.yml
-
-      - name: Commit validated implementation
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "Validation produced no implementation changes." >&2
-            exit 1
-          fi
-          git commit -m "feat: add encrypted thumbnails and verified source handling"
-          git push origin HEAD:agent/encrypted-thumbnails-safe-import-bootstrap
+          exit 1
