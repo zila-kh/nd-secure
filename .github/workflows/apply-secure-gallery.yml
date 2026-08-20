@@ -46,6 +46,21 @@ jobs:
                   ".header(CONTENT_TYPE, metadata.mime_type)",
                   ".header(CONTENT_TYPE, metadata.mime_type.as_str())",
               ),
+              (
+                  Path("src-tauri/src/gallery/container_helpers.rs"),
+                  "(total_size + CHUNK_SIZE as u64 - 1) / CHUNK_SIZE as u64",
+                  "total_size.div_ceil(CHUNK_SIZE as u64)",
+              ),
+              (
+                  Path("src-tauri/src/session.rs"),
+                  "derive_domain_key(&*unlocked.master_key, domain)?",
+                  "derive_domain_key(&unlocked.master_key, domain)?",
+              ),
+              (
+                  Path("src-tauri/src/source.rs"),
+                  "    drop(reader);\n",
+                  "",
+              ),
           )
 
           for path, old, new in replacements:
