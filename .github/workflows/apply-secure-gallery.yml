@@ -40,35 +40,40 @@ jobs:
                   Path("src-tauri/src/gallery/mod.rs"),
                   "pub use repository::{GalleryItem, GalleryObject, GalleryPage, GalleryRepository};",
                   "pub use repository::{GalleryObject, GalleryPage, GalleryRepository};",
+                  1,
               ),
               (
                   Path("src-tauri/src/protocol.rs"),
                   ".header(CONTENT_TYPE, metadata.mime_type)",
                   ".header(CONTENT_TYPE, metadata.mime_type.as_str())",
+                  1,
               ),
               (
                   Path("src-tauri/src/gallery/container_helpers.rs"),
                   "(total_size + CHUNK_SIZE as u64 - 1) / CHUNK_SIZE as u64",
                   "total_size.div_ceil(CHUNK_SIZE as u64)",
+                  1,
               ),
               (
                   Path("src-tauri/src/session.rs"),
                   "derive_domain_key(&*unlocked.master_key, domain)?",
                   "derive_domain_key(&unlocked.master_key, domain)?",
+                  1,
               ),
               (
                   Path("src-tauri/src/source.rs"),
                   "    drop(reader);\n",
                   "",
+                  2,
               ),
           )
 
-          for path, old, new in replacements:
+          for path, old, new, expected_count in replacements:
               content = path.read_text(encoding="utf-8")
               count = content.count(old)
-              if count != 1:
+              if count != expected_count:
                   raise SystemExit(
-                      f"expected exactly one compiler-fix target in {path}, found {count}"
+                      f"expected {expected_count} compiler-fix target(s) in {path}, found {count}"
                   )
               path.write_text(content.replace(old, new), encoding="utf-8")
           PY
