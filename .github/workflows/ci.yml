@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   repair_npm_lock:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/agent/encrypted-thumbnails-safe-import-bootstrap' && github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && ((github.event_name == 'push' && github.ref == 'refs/heads/agent/encrypted-thumbnails-safe-import-bootstrap') || (github.event_name == 'pull_request' && github.head_ref == 'agent/encrypted-thumbnails-safe-import-bootstrap'))
     permissions:
       contents: write
     runs-on: ubuntu-24.04
