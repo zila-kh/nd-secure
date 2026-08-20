@@ -11,7 +11,7 @@ use aes_gcm::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     crypto::{derive_object_key, random_array},
@@ -39,6 +39,12 @@ pub struct MediaMetadata {
     pub duration_ms: Option<u64>,
 }
 
+impl Drop for MediaMetadata {
+    fn drop(&mut self) {
+        self.signature.zeroize();
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Header {
     total_size: u64,
@@ -56,7 +62,6 @@ pub struct ContainerReader {
     key: Zeroizing<[u8; 32]>,
     data_offset: u64,
 }
-
 
 include!("container_reader.rs");
 include!("container_writer.rs");

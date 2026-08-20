@@ -12,9 +12,7 @@ pub struct GeneratedPassword {
 
 pub fn generate_password(length: usize, symbols: bool) -> Result<GeneratedPassword> {
     if !(12..=128).contains(&length) {
-        return Err(VaultError::InvalidInput(
-            "generated password length must be between 12 and 128".into(),
-        ));
+        return Err(VaultError::InvalidInput("generated password length must be between 12 and 128".into()));
     }
     const LOWER: &[u8] = b"abcdefghijkmnopqrstuvwxyz";
     const UPPER: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -29,11 +27,8 @@ pub fn generate_password(length: usize, symbols: bool) -> Result<GeneratedPasswo
         alphabet.extend_from_slice(SYMBOLS);
     }
 
-    let required: Vec<&[u8]> = if symbols {
-        vec![LOWER, UPPER, NUMBERS, SYMBOLS]
-    } else {
-        vec![LOWER, UPPER, NUMBERS]
-    };
+    let required: Vec<&[u8]> =
+        if symbols { vec![LOWER, UPPER, NUMBERS, SYMBOLS] } else { vec![LOWER, UPPER, NUMBERS] };
     let mut rng = OsRng;
     let mut output = Vec::with_capacity(length);
     for group in required {
@@ -45,10 +40,7 @@ pub fn generate_password(length: usize, symbols: bool) -> Result<GeneratedPasswo
     output.shuffle(&mut rng);
     let password = String::from_utf8(output).map_err(|_| VaultError::Crypto)?;
     let entropy_bits = length as f64 * (alphabet.len() as f64).log2();
-    Ok(GeneratedPassword {
-        password,
-        entropy_bits,
-    })
+    Ok(GeneratedPassword { password, entropy_bits })
 }
 
 #[cfg(test)]

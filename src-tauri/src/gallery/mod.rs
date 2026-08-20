@@ -1,5 +1,6 @@
 mod container;
 mod repository;
+mod thumbnail;
 
 pub use container::ContainerReader;
-pub use repository::{GalleryItem, GalleryPage, GalleryRepository};
+pub use repository::{GalleryObject, GalleryPage, GalleryRepository};

@@ -128,7 +128,6 @@ pub struct CredentialRepository {
     writer: Mutex<()>,
 }
 
-
 include!("repository_write.rs");
 include!("repository_read.rs");
 include!("repository_helpers.rs");

@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tauri::{AppHandle, State};
@@ -21,6 +22,23 @@ use crate::{
 };
 
 type CommandResult<T> = std::result::Result<T, String>;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportMediaItemResult {
+    source_index: usize,
+    id: Option<String>,
+    source_removed: bool,
+    warning: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportMediaResult {
+    items: Vec<ImportMediaItemResult>,
+    source_removal_enabled: bool,
+}
 
 fn public_error(error: VaultError) -> String {
     match error {
@@ -59,10 +77,7 @@ pub async fn initialize_vault(
 }
 
 #[tauri::command]
-pub async fn unlock_vault(
-    state: State<'_, AppState>,
-    password: String,
-) -> CommandResult<SessionStatus> {
+pub async fn unlock_vault(state: State<'_, AppState>, password: String) -> CommandResult<SessionStatus> {
     let session = Arc::clone(&state.session);
     let password = Zeroizing::new(password);
     blocking(move || session.unlock(password)).await
@@ -83,6 +98,15 @@ pub async fn set_auto_lock(
 }
 
 #[tauri::command]
+pub async fn set_delete_source_after_import(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> CommandResult<SessionStatus> {
+    let session = Arc::clone(&state.session);
+    blocking(move || session.set_delete_source_after_import(enabled)).await
+}
+
+#[tauri::command]
 pub async fn gallery_page(
     state: State<'_, AppState>,
     cursor: Option<String>,
@@ -98,7 +122,7 @@ pub async fn import_media(
     app: AppHandle,
     state: State<'_, AppState>,
     sources: Vec<String>,
-) -> CommandResult<Vec<String>> {
+) -> CommandResult<ImportMediaResult> {
     if sources.is_empty() || sources.len() > 100 {
         return Err("select between 1 and 100 media files".into());
     }
@@ -106,31 +130,36 @@ pub async fn import_media(
         return Err("a selected media source identifier is too long".into());
     }
 
-    let key = state
-        .session
-        .domain_key(GALLERY_DOMAIN)
-        .map_err(public_error)?;
+    let source_removal_enabled = state.session.delete_source_after_import().map_err(public_error)?;
+    let key = state.session.domain_key(GALLERY_DOMAIN).map_err(public_error)?;
     let repository = Arc::clone(&state.gallery);
     blocking(move || {
-        let mut imported = Vec::with_capacity(sources.len());
-        for selected in sources {
-            imported.push(source::import_source(
-                &app,
-                repository.as_ref(),
-                &key,
-                &selected,
-            )?);
+        let mut items = Vec::with_capacity(sources.len());
+        for (source_index, selected) in sources.into_iter().enumerate() {
+            match source::import_source(&app, repository.as_ref(), &key, &selected, source_removal_enabled) {
+                Ok(outcome) => items.push(ImportMediaItemResult {
+                    source_index,
+                    id: Some(outcome.id),
+                    source_removed: outcome.source_removed,
+                    warning: outcome.warning,
+                    error: None,
+                }),
+                Err(error) => items.push(ImportMediaItemResult {
+                    source_index,
+                    id: None,
+                    source_removed: false,
+                    warning: None,
+                    error: Some(public_error(error)),
+                }),
+            }
         }
-        Ok(imported)
+        Ok(ImportMediaResult { items, source_removal_enabled })
     })
     .await
 }
 
 #[tauri::command]
-pub async fn delete_media(
-    state: State<'_, AppState>,
-    id: String,
-) -> CommandResult<()> {
+pub async fn delete_media(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     state.session.touch().map_err(public_error)?;
     let id = canonical_uuid(&id).map_err(public_error)?;
     let repository = Arc::clone(&state.gallery);
@@ -147,24 +176,15 @@ pub async fn credential_page(
     if search.len() > 4096 {
         return Err("credential search text is too long".into());
     }
-    let key = state
-        .session
-        .domain_key(CREDENTIALS_DOMAIN)
-        .map_err(public_error)?;
+    let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
     let repository = Arc::clone(&state.credentials);
     blocking(move || repository.page(&key, cursor.as_deref(), limit, &search)).await
 }
 
 #[tauri::command]
-pub async fn credential_detail(
-    state: State<'_, AppState>,
-    id: String,
-) -> CommandResult<CredentialDetail> {
+pub async fn credential_detail(state: State<'_, AppState>, id: String) -> CommandResult<CredentialDetail> {
     let id = canonical_uuid(&id).map_err(public_error)?;
-    let key = state
-        .session
-        .domain_key(CREDENTIALS_DOMAIN)
-        .map_err(public_error)?;
+    let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
     let repository = Arc::clone(&state.credentials);
     blocking(move || repository.detail(&key, id)).await
 }
@@ -174,19 +194,13 @@ pub async fn save_credential(
     state: State<'_, AppState>,
     input: CredentialInput,
 ) -> CommandResult<CredentialDetail> {
-    let key = state
-        .session
-        .domain_key(CREDENTIALS_DOMAIN)
-        .map_err(public_error)?;
+    let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
     let repository = Arc::clone(&state.credentials);
     blocking(move || repository.save(&key, input)).await
 }
 
 #[tauri::command]
-pub async fn delete_credential(
-    state: State<'_, AppState>,
-    id: String,
-) -> CommandResult<()> {
+pub async fn delete_credential(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     state.session.touch().map_err(public_error)?;
     let id = canonical_uuid(&id).map_err(public_error)?;
     let repository = Arc::clone(&state.credentials);
@@ -201,10 +215,7 @@ pub async fn copy_credential_field(
     field: String,
 ) -> CommandResult<()> {
     let id = canonical_uuid(&id).map_err(public_error)?;
-    let key = state
-        .session
-        .domain_key(CREDENTIALS_DOMAIN)
-        .map_err(public_error)?;
+    let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
     let repository = Arc::clone(&state.credentials);
     let secret = blocking(move || repository.field(&key, id, &field)).await?;
 
@@ -240,15 +251,9 @@ pub fn generate_password(length: usize, symbols: bool) -> CommandResult<Generate
 }
 
 #[tauri::command]
-pub async fn credential_totp(
-    state: State<'_, AppState>,
-    id: String,
-) -> CommandResult<TotpCode> {
+pub async fn credential_totp(state: State<'_, AppState>, id: String) -> CommandResult<TotpCode> {
     let id = canonical_uuid(&id).map_err(public_error)?;
-    let key = state
-        .session
-        .domain_key(CREDENTIALS_DOMAIN)
-        .map_err(public_error)?;
+    let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
     let repository = Arc::clone(&state.credentials);
     blocking(move || {
         let secret = repository.totp_secret(&key, id)?;
