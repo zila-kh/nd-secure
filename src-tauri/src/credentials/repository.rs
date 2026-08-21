@@ -77,7 +77,8 @@ impl Default for CredentialScope {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]\pub struct CredentialInput {
+#[serde(rename_all = "camelCase")]
+pub struct CredentialInput {
     pub id: Option<String>,
     pub record_type: CredentialType,
     pub title: String,
