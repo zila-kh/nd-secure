@@ -11,13 +11,17 @@ impl CredentialRepository {
         cursor: Option<&str>,
         limit: u32,
         search: &str,
+        project_filter: Option<&str>,
+        environment_filter: Option<&str>,
     ) -> Result<CredentialPage> {
         let limit = limit.clamp(1, 500) as usize;
         let cursor = cursor.map(decode_cursor).transpose()?;
         let query = search.trim().to_lowercase();
+        let project_filter = project_filter.map(str::trim).filter(|value| !value.is_empty());
+        let environment_filter = environment_filter.map(str::trim).filter(|value| !value.is_empty());
         let connection = self.connection()?;
 
-        if query.is_empty() {
+        if query.is_empty() && project_filter.is_none() && environment_filter.is_none() {
             let requested = limit.saturating_add(1);
             let mut summaries = Vec::with_capacity(requested);
             if let Some(cursor) = cursor.as_ref() {
@@ -65,7 +69,8 @@ impl CredentialRepository {
         let mut summaries = Vec::new();
         for row in rows {
             let detail = decrypt_row(root_key, &row?)?;
-            let matches = detail.title.to_lowercase().contains(&query)
+            let matches_search = query.is_empty()
+                || detail.title.to_lowercase().contains(&query)
                 || detail
                     .project
                     .as_deref()
@@ -82,7 +87,18 @@ impl CredentialRepository {
                     .map(|value| value.to_lowercase().contains(&query))
                     .unwrap_or(false)
                 || detail.websites.iter().any(|value| value.to_lowercase().contains(&query));
-            if matches {
+            let matches_project = match project_filter {
+                Some("__central__") => detail.scope == CredentialScope::Central,
+                Some(project) => {
+                    detail.scope == CredentialScope::Project
+                        && detail.project.as_deref().map(|value| value == project).unwrap_or(false)
+                }
+                None => true,
+            };
+            let matches_environment = environment_filter
+                .map(|environment| detail.environment.as_deref() == Some(environment))
+                .unwrap_or(true);
+            if matches_search && matches_project && matches_environment {
                 summaries.push(summary_from_detail(detail));
             }
         }
