@@ -3,10 +3,7 @@ impl CredentialRepository {
         if let Some(parent) = db_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let repository = Self {
-            db_path,
-            writer: Mutex::new(()),
-        };
+        let repository = Self { db_path, writer: Mutex::new(()) };
         repository.initialize_schema()?;
         Ok(repository)
     }
@@ -32,8 +29,15 @@ impl CredentialRepository {
         };
 
         let record_type = input.record_type;
+        let scope = input.scope;
+        let project = match scope {
+            CredentialScope::Central => None,
+            CredentialScope::Project => clean_optional(input.project),
+        };
+        let environment = clean_optional(input.environment);
         let username = clean_optional(input.username);
         let password = input.password.filter(|value| !value.is_empty());
+        let secret_value = input.secret_value.filter(|value| !value.is_empty());
         let websites: Vec<String> = input
             .websites
             .into_iter()
@@ -42,17 +46,22 @@ impl CredentialRepository {
             .collect();
         let notes = input.notes.filter(|value| !value.is_empty());
         let totp_secret = clean_optional(input.totp_secret);
-        let (username, password, websites, totp_secret) = match record_type {
-            CredentialType::Login => (username, password, websites, None),
-            CredentialType::SecureNote => (None, None, Vec::new(), None),
-            CredentialType::Totp => (username, None, Vec::new(), totp_secret),
+        let (username, password, secret_value, websites, totp_secret) = match record_type {
+            CredentialType::Login => (username, password, None, websites, None),
+            CredentialType::SecureNote => (None, None, None, Vec::new(), None),
+            CredentialType::Totp => (username, None, None, Vec::new(), totp_secret),
+            CredentialType::Secret => (None, None, secret_value, Vec::new(), None),
         };
         let detail = CredentialDetail {
             id: id.to_string(),
             record_type,
             title: input.title.trim().to_owned(),
+            scope,
+            project,
+            environment,
             username,
             password,
+            secret_value,
             websites,
             notes,
             totp_secret,
@@ -103,5 +112,4 @@ impl CredentialRepository {
         )?;
         Ok(detail)
     }
-
 }
