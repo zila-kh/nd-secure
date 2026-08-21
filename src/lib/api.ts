@@ -35,7 +35,7 @@ export const vaultApi = {
   saveCredential: (input: CredentialInput) =>
     invoke<CredentialDetail>('save_credential', { input }),
   deleteCredential: (id: string) => invoke<void>('delete_credential', { id }),
-  copyCredentialField: (id: string, field: 'username' | 'password' | 'notes') =>
+  copyCredentialField: (id: string, field: 'username' | 'password' | 'secret' | 'notes') =>
     invoke<void>('copy_credential_field', { id, field }),
   generatePassword: (length = 20, symbols = true) =>
     invoke<GeneratedPassword>('generate_password', { length, symbols }),
