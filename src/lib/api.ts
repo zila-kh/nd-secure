@@ -29,13 +29,18 @@ export const vaultApi = {
   importMedia: (sources: string[]) => invoke<ImportMediaResult>('import_media', { sources }),
   deleteMedia: (id: string) => invoke<void>('delete_media', { id }),
 
-  credentialPage: (cursor: string | null = null, limit = 100, search = '') =>
-    invoke<CredentialPage>('credential_page', { cursor, limit, search }),
+  credentialPage: (
+    cursor: string | null = null,
+    limit = 100,
+    search = '',
+    project: string | null = null,
+    environment: string | null = null
+  ) => invoke<CredentialPage>('credential_page', { cursor, limit, search, project, environment }),
   credentialDetail: (id: string) => invoke<CredentialDetail>('credential_detail', { id }),
   saveCredential: (input: CredentialInput) =>
     invoke<CredentialDetail>('save_credential', { input }),
   deleteCredential: (id: string) => invoke<void>('delete_credential', { id }),
-  copyCredentialField: (id: string, field: 'username' | 'password' | 'notes') =>
+  copyCredentialField: (id: string, field: 'username' | 'password' | 'secret' | 'notes') =>
     invoke<void>('copy_credential_field', { id, field }),
   generatePassword: (length = 20, symbols = true) =>
     invoke<GeneratedPassword>('generate_password', { length, symbols }),

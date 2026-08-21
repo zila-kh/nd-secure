@@ -26,7 +26,10 @@ const FORMAT_VERSION: i64 = 1;
 const MAX_TITLE_BYTES: usize = 512;
 const MAX_USERNAME_BYTES: usize = 4096;
 const MAX_PASSWORD_BYTES: usize = 16 * 1024;
+const MAX_SECRET_BYTES: usize = 64 * 1024;
 const MAX_NOTES_BYTES: usize = 1024 * 1024;
+const MAX_PROJECT_BYTES: usize = 256;
+const MAX_ENVIRONMENT_BYTES: usize = 64;
 const MAX_WEBSITES: usize = 64;
 const MAX_WEBSITE_BYTES: usize = 4096;
 
@@ -36,6 +39,7 @@ pub enum CredentialType {
     Login,
     SecureNote,
     Totp,
+    Secret,
 }
 
 impl CredentialType {
@@ -44,6 +48,7 @@ impl CredentialType {
             Self::Login => 1,
             Self::SecureNote => 2,
             Self::Totp => 3,
+            Self::Secret => 4,
         }
     }
 
@@ -52,8 +57,22 @@ impl CredentialType {
             1 => Ok(Self::Login),
             2 => Ok(Self::SecureNote),
             3 => Ok(Self::Totp),
+            4 => Ok(Self::Secret),
             _ => Err(VaultError::AuthenticationFailed),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialScope {
+    Central,
+    Project,
+}
+
+impl Default for CredentialScope {
+    fn default() -> Self {
+        Self::Central
     }
 }
 
@@ -63,8 +82,16 @@ pub struct CredentialInput {
     pub id: Option<String>,
     pub record_type: CredentialType,
     pub title: String,
+    #[serde(default)]
+    pub scope: CredentialScope,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub environment: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
+    #[serde(default)]
+    pub secret_value: Option<String>,
     pub websites: Vec<String>,
     pub notes: Option<String>,
     pub totp_secret: Option<String>,
@@ -77,8 +104,16 @@ pub struct CredentialDetail {
     pub id: String,
     pub record_type: CredentialType,
     pub title: String,
+    #[serde(default)]
+    pub scope: CredentialScope,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub environment: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
+    #[serde(default)]
+    pub secret_value: Option<String>,
     pub websites: Vec<String>,
     pub notes: Option<String>,
     pub totp_secret: Option<String>,
@@ -93,6 +128,9 @@ pub struct CredentialSummary {
     pub id: String,
     pub record_type: CredentialType,
     pub title: String,
+    pub scope: CredentialScope,
+    pub project: Option<String>,
+    pub environment: Option<String>,
     pub username: Option<String>,
     pub favorite: bool,
     pub updated_at: i64,

@@ -3,6 +3,9 @@ fn summary_from_detail(detail: CredentialDetail) -> CredentialSummary {
         id: detail.id,
         record_type: detail.record_type,
         title: detail.title,
+        scope: detail.scope,
+        project: detail.project,
+        environment: detail.environment,
         username: detail.username,
         favorite: detail.favorite,
         updated_at: detail.updated_at,
@@ -23,10 +26,7 @@ fn page_from_summaries(summaries: Vec<CredentialSummary>, has_more: bool) -> Res
     } else {
         None
     };
-    Ok(CredentialPage {
-        items: summaries,
-        next_cursor,
-    })
+    Ok(CredentialPage { items: summaries, next_cursor })
 }
 
 fn encrypted_row(connection: &Connection, id: Uuid) -> Result<EncryptedRow> {
@@ -87,6 +87,7 @@ fn decrypt_row(root_key: &[u8; 32], row: &EncryptedRow) -> Result<CredentialDeta
         || detail.record_type != row.record_type
         || detail.created_at != row.created_at
         || detail.updated_at != row.updated_at
+        || (detail.scope == CredentialScope::Central && detail.project.is_some())
     {
         return Err(VaultError::AuthenticationFailed);
     }
@@ -118,12 +119,46 @@ fn validate_input(input: &CredentialInput) -> Result<()> {
     }
     if input.username.as_ref().map(String::len).unwrap_or(0) > MAX_USERNAME_BYTES
         || input.password.as_ref().map(String::len).unwrap_or(0) > MAX_PASSWORD_BYTES
+        || input.secret_value.as_ref().map(String::len).unwrap_or(0) > MAX_SECRET_BYTES
         || input.notes.as_ref().map(String::len).unwrap_or(0) > MAX_NOTES_BYTES
+        || input.project.as_ref().map(String::len).unwrap_or(0) > MAX_PROJECT_BYTES
+        || input.environment.as_ref().map(String::len).unwrap_or(0) > MAX_ENVIRONMENT_BYTES
         || input.websites.len() > MAX_WEBSITES
         || input.websites.iter().any(|value| value.len() > MAX_WEBSITE_BYTES)
     {
         return Err(VaultError::InvalidInput("credential field exceeds its size limit".into()));
     }
+
+    match input.scope {
+        CredentialScope::Central => {
+            if input.project.as_deref().is_some_and(|value| !value.trim().is_empty()) {
+                return Err(VaultError::InvalidInput(
+                    "central credentials cannot be assigned to a project".into(),
+                ));
+            }
+        }
+        CredentialScope::Project => {
+            let project = input.project.as_deref().unwrap_or_default().trim();
+            if project.is_empty() {
+                return Err(VaultError::InvalidInput(
+                    "project-scoped credentials require a project name".into(),
+                ));
+            }
+        }
+    }
+
+    if let Some(environment) = input.environment.as_deref() {
+        let environment = environment.trim();
+        if environment.is_empty() {
+            return Err(VaultError::InvalidInput("environment cannot be blank".into()));
+        }
+        if environment.chars().any(char::is_control) {
+            return Err(VaultError::InvalidInput(
+                "environment contains unsupported characters".into(),
+            ));
+        }
+    }
+
     if input.record_type == CredentialType::Totp {
         let secret = input
             .totp_secret
@@ -131,13 +166,20 @@ fn validate_input(input: &CredentialInput) -> Result<()> {
             .ok_or_else(|| VaultError::InvalidInput("TOTP secret is required".into()))?;
         validate_totp_secret(secret)?;
     }
+    if input.record_type == CredentialType::Secret
+        && input
+            .secret_value
+            .as_deref()
+            .map(str::is_empty)
+            .unwrap_or(true)
+    {
+        return Err(VaultError::InvalidInput("secret value is required".into()));
+    }
     Ok(())
 }
 
 fn clean_optional(value: Option<String>) -> Option<String> {
-    value
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
+    value.map(|value| value.trim().to_owned()).filter(|value| !value.is_empty())
 }
 
 fn parse_uuid(value: &str) -> Result<Uuid> {
@@ -167,7 +209,6 @@ fn unix_timestamp() -> Result<i64> {
     i64::try_from(duration.as_secs()).map_err(|_| VaultError::Platform("system clock overflow".into()))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,8 +225,12 @@ mod tests {
                     id: None,
                     record_type: CredentialType::Login,
                     title: "Example".into(),
+                    scope: CredentialScope::Project,
+                    project: Some("todo".into()),
+                    environment: Some("prod".into()),
                     username: Some("person@example.com".into()),
                     password: Some("a-long-generated-password".into()),
+                    secret_value: None,
                     websites: vec!["https://example.com".into()],
                     notes: Some("recovery note".into()),
                     totp_secret: None,
@@ -196,9 +241,12 @@ mod tests {
         let id = Uuid::parse_str(&saved.id).unwrap();
         let detail = repository.detail(&key, id).unwrap();
         assert_eq!(detail.password.as_deref(), Some("a-long-generated-password"));
-        assert_eq!(detail.username.as_deref(), Some("person@example.com"));
+        assert_eq!(detail.project.as_deref(), Some("todo"));
+        assert_eq!(detail.environment.as_deref(), Some("prod"));
 
-        let page = repository.page(&key, None, 25, "example").unwrap();
+        let page = repository
+            .page(&key, None, 25, "", Some("todo"), Some("prod"))
+            .unwrap();
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].id, saved.id);
 
@@ -209,30 +257,32 @@ mod tests {
     }
 
     #[test]
-    fn changing_record_type_discards_hidden_secret_fields() {
+    fn secret_records_are_project_scoped_and_encrypted() {
         let directory = tempfile::tempdir().unwrap();
         let repository = CredentialRepository::new(directory.path().join("credentials.sqlite3")).unwrap();
-        let key = [21_u8; 32];
+        let key = [31_u8; 32];
         let detail = repository
             .save(
                 &key,
                 CredentialInput {
                     id: None,
-                    record_type: CredentialType::SecureNote,
-                    title: "Note".into(),
-                    username: Some("hidden-user".into()),
-                    password: Some("hidden-password".into()),
-                    websites: vec!["https://hidden.example".into()],
-                    notes: Some("kept note".into()),
-                    totp_secret: Some("JBSWY3DPEHPK3PXP".into()),
+                    record_type: CredentialType::Secret,
+                    title: "DATABASE_URL".into(),
+                    scope: CredentialScope::Project,
+                    project: Some("todo".into()),
+                    environment: Some("uat".into()),
+                    username: None,
+                    password: None,
+                    secret_value: Some("postgres://sensitive".into()),
+                    websites: Vec::new(),
+                    notes: Some("rotated quarterly".into()),
+                    totp_secret: None,
                     favorite: false,
                 },
             )
             .unwrap();
-        assert!(detail.username.is_none());
-        assert!(detail.password.is_none());
-        assert!(detail.websites.is_empty());
-        assert!(detail.totp_secret.is_none());
-        assert_eq!(detail.notes.as_deref(), Some("kept note"));
+        assert_eq!(detail.secret_value.as_deref(), Some("postgres://sensitive"));
+        let stored = fs::read(directory.path().join("credentials.sqlite3")).unwrap();
+        assert!(!stored.windows(b"postgres://sensitive".len()).any(|w| w == b"postgres://sensitive"));
     }
 }

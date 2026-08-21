@@ -13,7 +13,7 @@
   let observer: ResizeObserver | undefined;
   let lastRequestedLength = -1;
 
-  const rowHeight = 72;
+  const rowHeight = 82;
   const overscanRows = 5;
 
   $: rowCount = items.length;
@@ -38,6 +38,16 @@
     scrollTop = viewport.scrollTop;
   }
 
+  function scopeLabel(item: CredentialSummary) {
+    const owner = item.scope === 'central' ? 'Central' : item.project || 'Project';
+    return item.environment ? `${owner} · ${item.environment}` : owner;
+  }
+
+  function typeLabel(item: CredentialSummary) {
+    if (item.recordType === 'secret') return 'secret key';
+    return item.recordType.replace('_', ' ');
+  }
+
   onMount(() => {
     observer = new ResizeObserver(measure);
     observer.observe(viewport);
@@ -51,7 +61,7 @@
   bind:this={viewport}
   on:scroll={onScroll}
   class="relative h-full min-h-[300px] overflow-auto rounded-xl border border-border bg-card"
-  aria-label="Password vault items"
+  aria-label="Encrypted credential items"
 >
   <div class="relative" style={`height:${totalHeight}px`}>
     {#each visibleItems as entry (entry.item.id)}
@@ -69,8 +79,9 @@
             <span class="truncate font-medium">{entry.item.title}</span>
             {#if entry.item.favorite}<Star size={14} class="shrink-0" fill="currentColor" />{/if}
           </div>
-          <div class="truncate text-xs text-muted-foreground">
-            {entry.item.username || entry.item.recordType.replace('_', ' ')}
+          <div class="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span class="rounded bg-muted px-1.5 py-0.5 text-[11px] uppercase tracking-wide">{scopeLabel(entry.item)}</span>
+            <span class="truncate">{entry.item.username || typeLabel(entry.item)}</span>
           </div>
         </div>
         <time class="hidden text-xs text-muted-foreground sm:block">
@@ -84,8 +95,8 @@
     <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center text-muted-foreground">
       <KeyRound size={38} />
       <div>
-        <p class="font-medium text-foreground">No password items</p>
-        <p class="text-sm">Create a login, secure note, or TOTP item.</p>
+        <p class="font-medium text-foreground">No credentials found</p>
+        <p class="text-sm">Create a central secret or a credential for a project environment.</p>
       </div>
     </div>
   {/if}

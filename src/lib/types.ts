@@ -36,12 +36,16 @@ export interface ImportMediaResult {
   sourceRemovalEnabled: boolean;
 }
 
-export type CredentialType = 'login' | 'secure_note' | 'totp';
+export type CredentialType = 'login' | 'secure_note' | 'totp' | 'secret';
+export type CredentialScope = 'central' | 'project';
 
 export interface CredentialSummary {
   id: string;
   recordType: CredentialType;
   title: string;
+  scope: CredentialScope;
+  project?: string | null;
+  environment?: string | null;
   username?: string | null;
   favorite: boolean;
   updatedAt: number;
@@ -56,8 +60,12 @@ export interface CredentialInput {
   id?: string;
   recordType: CredentialType;
   title: string;
+  scope: CredentialScope;
+  project?: string;
+  environment?: string;
   username?: string;
   password?: string;
+  secretValue?: string;
   websites: string[];
   notes?: string;
   totpSecret?: string;
