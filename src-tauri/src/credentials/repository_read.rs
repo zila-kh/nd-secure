@@ -89,14 +89,25 @@ impl CredentialRepository {
                 || detail.websites.iter().any(|value| value.to_lowercase().contains(&query));
             let matches_project = match project_filter {
                 Some("__central__") => detail.scope == CredentialScope::Central,
+                Some("__project__") => detail.scope == CredentialScope::Project,
                 Some(project) => {
                     detail.scope == CredentialScope::Project
-                        && detail.project.as_deref().map(|value| value == project).unwrap_or(false)
+                        && detail
+                            .project
+                            .as_deref()
+                            .map(|value| value.eq_ignore_ascii_case(project))
+                            .unwrap_or(false)
                 }
                 None => true,
             };
             let matches_environment = environment_filter
-                .map(|environment| detail.environment.as_deref() == Some(environment))
+                .map(|environment| {
+                    detail
+                        .environment
+                        .as_deref()
+                        .map(|value| value.eq_ignore_ascii_case(environment))
+                        .unwrap_or(false)
+                })
                 .unwrap_or(true);
             if matches_search && matches_project && matches_environment {
                 summaries.push(summary_from_detail(detail));
