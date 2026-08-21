@@ -67,14 +67,21 @@ impl CredentialRepository {
             let detail = decrypt_row(root_key, &row?)?;
             let matches = detail.title.to_lowercase().contains(&query)
                 || detail
-                    .username
+                    .project
                     .as_deref()
                     .map(|value| value.to_lowercase().contains(&query))
                     .unwrap_or(false)
                 || detail
-                    .websites
-                    .iter()
-                    .any(|value| value.to_lowercase().contains(&query));
+                    .environment
+                    .as_deref()
+                    .map(|value| value.to_lowercase().contains(&query))
+                    .unwrap_or(false)
+                || detail
+                    .username
+                    .as_deref()
+                    .map(|value| value.to_lowercase().contains(&query))
+                    .unwrap_or(false)
+                || detail.websites.iter().any(|value| value.to_lowercase().contains(&query));
             if matches {
                 summaries.push(summary_from_detail(detail));
             }
@@ -119,6 +126,7 @@ impl CredentialRepository {
         let value = match field {
             "username" => detail.username.unwrap_or_default(),
             "password" => detail.password.unwrap_or_default(),
+            "secret" => detail.secret_value.unwrap_or_default(),
             "notes" => detail.notes.unwrap_or_default(),
             _ => return Err(VaultError::InvalidInput("unsupported credential field".into())),
         };
