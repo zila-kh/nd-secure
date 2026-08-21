@@ -244,7 +244,9 @@ mod tests {
         assert_eq!(detail.project.as_deref(), Some("todo"));
         assert_eq!(detail.environment.as_deref(), Some("prod"));
 
-        let page = repository.page(&key, None, 25, "prod").unwrap();
+        let page = repository
+            .page(&key, None, 25, "", Some("todo"), Some("prod"))
+            .unwrap();
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].id, saved.id);
 
