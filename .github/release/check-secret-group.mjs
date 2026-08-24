@@ -6,15 +6,14 @@ if (names.length === 0) {
 }
 
 const present = names.filter((name) => (process.env[name] ?? '').trim().length > 0);
-if (present.length !== 0 && present.length !== names.length) {
+if (present.length !== names.length) {
   const missing = names.filter((name) => !present.includes(name));
-  throw new Error(`Configure the complete secret group or remove it. Missing: ${missing.join(', ')}`);
+  throw new Error(`Production signing is required. Missing secrets: ${missing.join(', ')}`);
 }
 
 const outputPath = process.env.GITHUB_OUTPUT;
 if (!outputPath) {
   throw new Error('GITHUB_OUTPUT is not set');
 }
-const enabled = present.length === names.length;
-appendFileSync(outputPath, `enabled=${enabled}\n`);
-console.log(enabled ? 'Signing configuration is complete.' : 'Signing configuration is absent; platform artifacts will be omitted.');
+appendFileSync(outputPath, 'enabled=true\n');
+console.log('Production signing configuration is complete.');
