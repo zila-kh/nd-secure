@@ -68,9 +68,29 @@ where
         .map_err(public_error)
 }
 
+pub fn clear_tracked_clipboard(app: &AppHandle, state: &AppState) {
+    let Some((generation, expected_digest)) = state.clipboard.current() else {
+        return;
+    };
+    let Ok(current) = app.clipboard().read_text() else {
+        state.clipboard.clear_if_generation(generation);
+        return;
+    };
+    let current = Zeroizing::new(current);
+    let current_digest = Sha256::digest(current.as_bytes());
+    if bool::from(current_digest[..].ct_eq(&expected_digest[..])) {
+        let _ = app.clipboard().clear();
+    }
+    state.clipboard.clear_if_generation(generation);
+}
+
 #[tauri::command]
-pub fn session_status(state: State<'_, AppState>) -> SessionStatus {
-    state.session.status()
+pub fn session_status(app: AppHandle, state: State<'_, AppState>) -> SessionStatus {
+    let status = state.session.status();
+    if status.locked {
+        clear_tracked_clipboard(&app, state.inner());
+    }
+    status
 }
 
 #[tauri::command]
@@ -140,8 +160,9 @@ pub async fn recover_vault(
 }
 
 #[tauri::command]
-pub fn lock_vault(state: State<'_, AppState>) -> SessionStatus {
+pub fn lock_vault(app: AppHandle, state: State<'_, AppState>) -> SessionStatus {
     state.media_server.revoke_all();
+    clear_tracked_clipboard(&app, state.inner());
     state.session.lock()
 }
 
@@ -357,13 +378,19 @@ pub async fn copy_credential_field(
     let digest = Sha256::digest(secret.as_bytes());
     let mut expected_digest = Zeroizing::new([0_u8; 32]);
     expected_digest.copy_from_slice(&digest);
+    let generation = state.clipboard.track(*expected_digest);
+    let clipboard_tracker = Arc::clone(&state.clipboard);
     drop(secret);
 
     let delayed_app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(clipboard_timeout_seconds)).await;
         let _ = tauri::async_runtime::spawn_blocking(move || {
+            if !clipboard_tracker.is_current(generation) {
+                return;
+            }
             let Ok(current) = delayed_app.clipboard().read_text() else {
+                clipboard_tracker.clear_if_generation(generation);
                 return;
             };
             let current = Zeroizing::new(current);
@@ -371,6 +398,7 @@ pub async fn copy_credential_field(
             if bool::from(current_digest[..].ct_eq(&expected_digest[..])) {
                 let _ = delayed_app.clipboard().clear();
             }
+            clipboard_tracker.clear_if_generation(generation);
         })
         .await;
     });
