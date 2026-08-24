@@ -68,12 +68,8 @@ where
         .map_err(public_error)
 }
 
-pub fn clear_tracked_clipboard(app: &AppHandle, state: &AppState) {
-    let Some((generation, expected_digest)) = state.clipboard.current() else {
-        return;
-    };
+fn clear_clipboard_if_digest(app: &AppHandle, expected_digest: &[u8; 32]) {
     let Ok(current) = app.clipboard().read_text() else {
-        state.clipboard.clear_if_generation(generation);
         return;
     };
     let current = Zeroizing::new(current);
@@ -81,7 +77,16 @@ pub fn clear_tracked_clipboard(app: &AppHandle, state: &AppState) {
     if bool::from(current_digest[..].ct_eq(&expected_digest[..])) {
         let _ = app.clipboard().clear();
     }
-    state.clipboard.clear_if_generation(generation);
+}
+
+pub fn clear_tracked_clipboard(app: &AppHandle, state: &AppState) {
+    state.clipboard.with_operation(|| {
+        let Some((generation, expected_digest)) = state.clipboard.current() else {
+            return;
+        };
+        clear_clipboard_if_digest(app, &expected_digest);
+        state.clipboard.clear_if_generation(generation);
+    });
 }
 
 #[tauri::command]
@@ -372,13 +377,21 @@ pub async fn copy_credential_field(
     let repository = Arc::clone(&state.credentials);
     let secret = blocking(move || repository.field(&key, id, &field)).await?;
 
-    app.clipboard()
-        .write_text(secret.as_str())
-        .map_err(|_| "unable to write to the system clipboard".to_owned())?;
     let digest = Sha256::digest(secret.as_bytes());
     let mut expected_digest = Zeroizing::new([0_u8; 32]);
     expected_digest.copy_from_slice(&digest);
-    let generation = state.clipboard.track(*expected_digest);
+    let generation = state.clipboard.with_operation(|| -> CommandResult<u64> {
+        app.clipboard()
+            .write_text(secret.as_str())
+            .map_err(|_| "unable to write to the system clipboard".to_owned())?;
+        let generation = state.clipboard.track(*expected_digest);
+        if state.session.status().locked {
+            clear_clipboard_if_digest(&app, expected_digest.as_ref());
+            state.clipboard.clear_if_generation(generation);
+            return Err("vault is locked".into());
+        }
+        Ok(generation)
+    })?;
     let clipboard_tracker = Arc::clone(&state.clipboard);
     drop(secret);
 
@@ -386,19 +399,13 @@ pub async fn copy_credential_field(
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(clipboard_timeout_seconds)).await;
         let _ = tauri::async_runtime::spawn_blocking(move || {
-            if !clipboard_tracker.is_current(generation) {
-                return;
-            }
-            let Ok(current) = delayed_app.clipboard().read_text() else {
+            clipboard_tracker.with_operation(|| {
+                if !clipboard_tracker.is_current(generation) {
+                    return;
+                }
+                clear_clipboard_if_digest(&delayed_app, expected_digest.as_ref());
                 clipboard_tracker.clear_if_generation(generation);
-                return;
-            };
-            let current = Zeroizing::new(current);
-            let current_digest = Sha256::digest(current.as_bytes());
-            if bool::from(current_digest[..].ct_eq(&expected_digest[..])) {
-                let _ = delayed_app.clipboard().clear();
-            }
-            clipboard_tracker.clear_if_generation(generation);
+            });
         })
         .await;
     });
