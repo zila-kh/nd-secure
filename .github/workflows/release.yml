@@ -51,11 +51,14 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Use pinned npm
+        run: npm install --global npm@11.19.0
       - name: Install Rust toolchain
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
           rustup default "$RUST_TOOLCHAIN"
       - name: Install Linux prerequisites
         shell: bash
@@ -65,7 +68,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
             libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget xdg-utils
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - name: Validate frontend
         run: |
           npm run lint
@@ -74,8 +77,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo check --manifest-path src-tauri/Cargo.toml --all-targets
-          cargo test --manifest-path src-tauri/Cargo.toml
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo fmt --manifest-path plugins/tauri-plugin-vault-source/Cargo.toml --all -- --check
+          cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+          cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets
+          cargo test --manifest-path src-tauri/Cargo.toml --locked
 
   build_desktop:
     name: Build ${{ matrix.label }}
@@ -101,6 +107,9 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Use pinned npm
+        run: npm install --global npm@11.19.0
       - name: Install Rust target
         shell: bash
         run: |
@@ -108,7 +117,7 @@ jobs:
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           rustup default "$RUST_TOOLCHAIN"
           rustup target add "${{ matrix.target }}"
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - name: Write release configuration
         shell: bash
         env:
@@ -184,6 +193,9 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Use pinned npm
+        run: npm install --global npm@11.19.0
       - id: signing
         name: Validate Android signing secrets
         env:
@@ -216,7 +228,7 @@ jobs:
           [[ -n "$ndk_home" ]] || { echo "No Android NDK installation was found." >&2; exit 1; }
           echo "NDK_HOME=$ndk_home" >> "$GITHUB_ENV"
       - if: steps.signing.outputs.enabled == 'true'
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Initialize Android project
         if: steps.signing.outputs.enabled == 'true'
         run: npm run tauri android init -- --ci --skip-targets-install

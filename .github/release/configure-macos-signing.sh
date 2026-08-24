@@ -15,12 +15,11 @@ for value in "${values[@]}"; do
 done
 
 if (( present == 0 )); then
-  echo 'APPLE_SIGNING_IDENTITY=-' >> "$GITHUB_ENV"
-  echo "Apple signing is not configured; the application will receive an ad-hoc signature."
-  exit 0
+  echo "Apple Developer ID signing and notarization are required for production releases. Configure all Apple signing secrets before publishing." >&2
+  exit 1
 fi
 if (( present != ${#values[@]} )); then
-  echo "Configure all Apple signing and notarization secrets or none of them." >&2
+  echo "Configure all Apple signing and notarization secrets or none of the release will be published." >&2
   exit 1
 fi
 
@@ -48,11 +47,15 @@ security find-identity -v -p codesigning "$keychain_path" \
   | grep -E '^[[:space:]]*[0-9]+\)' > "$identities_file" || true
 identity_count="$(wc -l < "$identities_file" | tr -d ' ')"
 if [[ "$identity_count" != "1" ]]; then
-  echo "Expected exactly one code-signing identity, found $identity_count." >&2
+  echo "Expected exactly one valid code-signing identity, found $identity_count." >&2
   exit 1
 fi
 identity="$(sed -E 's/.*"(.*)".*/\1/' "$identities_file")"
 [[ -n "$identity" ]] || { echo "Could not determine the Apple signing identity." >&2; exit 1; }
+[[ "$identity" == Developer\ ID\ Application:* ]] || {
+  echo "Production macOS releases require a Developer ID Application identity; found: $identity" >&2
+  exit 1
+}
 
 {
   echo "APPLE_SIGNING_IDENTITY=$identity"

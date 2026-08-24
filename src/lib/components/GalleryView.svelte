@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { open } from '@tauri-apps/plugin-dialog';
+  import { confirm, open } from '@tauri-apps/plugin-dialog';
   import { CheckCircle2, LoaderCircle, Plus, RefreshCw, Trash2, X } from 'lucide-svelte';
   import { onDestroy, onMount } from 'svelte';
   import { mediaUrl, vaultApi } from '../api';
@@ -126,12 +126,20 @@
 
   async function removeSelected() {
     if (!selected) return;
+    const approved = await confirm(
+      'Permanently delete this encrypted media item from ND Secure? This action cannot be undone.',
+      { title: 'Delete encrypted media?', kind: 'warning' }
+    );
+    if (!approved || !selected) return;
+
     const selectedId = selected.id;
     revokeVideoStream();
     try {
       await vaultApi.deleteMedia(selectedId);
       items = items.filter((item) => item.id !== selectedId);
       selected = null;
+      notice = 'Encrypted media item permanently deleted.';
+      error = '';
     } catch (cause) {
       error = String(cause);
     }

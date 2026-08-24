@@ -64,6 +64,7 @@ pub fn run() {
 
                 if should_lock {
                     state.media_server.revoke_all();
+                    commands::clear_tracked_clipboard(window.app_handle(), state.inner());
                     state.session.lock();
                 }
             }
