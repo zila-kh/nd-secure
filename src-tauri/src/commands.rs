@@ -68,13 +68,13 @@ where
         .map_err(public_error)
 }
 
-fn clear_clipboard_if_digest(app: &AppHandle, expected_digest: &[u8; 32]) {
+fn clear_clipboard_if_digest(app: &AppHandle, expected_digest: &[u8]) {
     let Ok(current) = app.clipboard().read_text() else {
         return;
     };
     let current = Zeroizing::new(current);
     let current_digest = Sha256::digest(current.as_bytes());
-    if bool::from(current_digest[..].ct_eq(&expected_digest[..])) {
+    if bool::from(current_digest[..].ct_eq(expected_digest)) {
         let _ = app.clipboard().clear();
     }
 }
