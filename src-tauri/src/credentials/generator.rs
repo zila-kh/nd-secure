@@ -3,9 +3,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, VaultError};
 
-const LOWER_WITH_AMBIGUOUS: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
-const UPPER_WITH_AMBIGUOUS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-const NUMBERS_WITH_AMBIGUOUS: &[u8] = b"0123456789";
+const LOWER_WITH_AMBIGUOUS: &[u8] =
+    b"abcdefghijklmnopqrstuvwxyz";
+const UPPER_WITH_AMBIGUOUS: &[u8] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const NUMBERS_WITH_AMBIGUOUS: &[u8] =
+    b"0123456789";
 const LOWER_SAFE: &[u8] = b"abcdefghijkmnopqrstuvwxyz";
 const UPPER_SAFE: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ";
 const NUMBERS_SAFE: &[u8] = b"23456789";
@@ -166,7 +169,14 @@ mod tests {
             min_symbols: 4,
         })
         .unwrap();
-        assert!(generated.password.bytes().filter(u8::is_ascii_digit).count() >= 5);
+        assert!(
+            generated
+                .password
+                .bytes()
+                .filter(u8::is_ascii_digit)
+                .count()
+                >= 5
+        );
         assert!(generated.password.bytes().filter(|byte| SYMBOLS.contains(byte)).count() >= 4);
     }
 
