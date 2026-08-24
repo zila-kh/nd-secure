@@ -56,7 +56,8 @@ pub fn run() {
                 let should_lock = matches!(
                     event,
                     tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
-                ) || (matches!(event, tauri::WindowEvent::Focused(false)) && state.session.lock_on_blur());
+                ) || (matches!(event, tauri::WindowEvent::Focused(false))
+                    && state.session.lock_on_blur());
                 #[cfg(mobile)]
                 let should_lock = should_lock
                     || (matches!(event, tauri::WindowEvent::Suspended) && state.session.lock_on_suspend());
