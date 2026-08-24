@@ -184,14 +184,7 @@ pub async fn credential_page(
     let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
     let repository = Arc::clone(&state.credentials);
     blocking(move || {
-        repository.page(
-            &key,
-            cursor.as_deref(),
-            limit,
-            &search,
-            project.as_deref(),
-            environment.as_deref(),
-        )
+        repository.page(&key, cursor.as_deref(), limit, &search, project.as_deref(), environment.as_deref())
     })
     .await
 }
