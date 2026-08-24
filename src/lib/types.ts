@@ -36,6 +36,11 @@ export interface ImportMediaResult {
   sourceRemovalEnabled: boolean;
 }
 
+export interface MediaStreamHandle {
+  url: string;
+  token: string;
+}
+
 export type CredentialType = 'login' | 'secure_note' | 'totp' | 'secret';
 export type CredentialScope = 'central' | 'project';
 

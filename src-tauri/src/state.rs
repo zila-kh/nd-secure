@@ -3,13 +3,17 @@ use std::sync::{
     Arc,
 };
 
-use crate::{credentials::CredentialRepository, gallery::GalleryRepository, session::SessionState};
+use crate::{
+    credentials::CredentialRepository, gallery::GalleryRepository, media_server::MediaServer,
+    session::SessionState,
+};
 
 #[derive(Clone)]
 pub struct AppState {
     pub session: Arc<SessionState>,
     pub gallery: Arc<GalleryRepository>,
     pub credentials: Arc<CredentialRepository>,
+    pub media_server: Arc<MediaServer>,
     protocol_active: Arc<AtomicUsize>,
     protocol_limit: usize,
 }
@@ -19,11 +23,13 @@ impl AppState {
         session: Arc<SessionState>,
         gallery: Arc<GalleryRepository>,
         credentials: Arc<CredentialRepository>,
+        media_server: Arc<MediaServer>,
     ) -> Self {
         Self {
             session,
             gallery,
             credentials,
+            media_server,
             protocol_active: Arc::new(AtomicUsize::new(0)),
             protocol_limit: if cfg!(target_os = "android") { 2 } else { 4 },
         }
