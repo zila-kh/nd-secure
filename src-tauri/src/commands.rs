@@ -10,13 +10,14 @@ use zeroize::Zeroizing;
 
 use crate::{
     credentials::{
-        generate_password as create_password, generate_totp, CredentialDetail, CredentialInput,
-        CredentialPage, GeneratedPassword, TotpCode,
+        generate_password as create_password, generate_password_with_options, generate_totp,
+        CredentialDetail, CredentialInput, CredentialPage, GeneratedPassword, PasswordGeneratorOptions,
+        TotpCode,
     },
     crypto::{CREDENTIALS_DOMAIN, GALLERY_DOMAIN},
     error::{Result, VaultError},
     gallery::GalleryPage,
-    session::SessionStatus,
+    session::{RecoveryKey, SessionStatus},
     source,
     state::AppState,
 };
@@ -91,6 +92,60 @@ pub async fn unlock_vault(state: State<'_, AppState>, password: String) -> Comma
 }
 
 #[tauri::command]
+pub async fn reauthenticate_vault(
+    state: State<'_, AppState>,
+    password: String,
+) -> CommandResult<SessionStatus> {
+    let session = Arc::clone(&state.session);
+    let password = Zeroizing::new(password);
+    blocking(move || session.reauthenticate(password)).await
+}
+
+#[tauri::command]
+pub async fn change_master_password(
+    state: State<'_, AppState>,
+    current_password: String,
+    new_password: String,
+) -> CommandResult<SessionStatus> {
+    let session = Arc::clone(&state.session);
+    let current_password = Zeroizing::new(current_password);
+    let new_password = Zeroizing::new(new_password);
+    blocking(move || session.change_master_password(current_password, new_password)).await
+}
+
+#[tauri::command]
+pub async fn create_recovery_key(
+    state: State<'_, AppState>,
+    password: String,
+) -> CommandResult<RecoveryKey> {
+    let session = Arc::clone(&state.session);
+    let password = Zeroizing::new(password);
+    blocking(move || session.create_recovery_key(password)).await
+}
+
+#[tauri::command]
+pub async fn disable_recovery(
+    state: State<'_, AppState>,
+    password: String,
+) -> CommandResult<SessionStatus> {
+    let session = Arc::clone(&state.session);
+    let password = Zeroizing::new(password);
+    blocking(move || session.disable_recovery(password)).await
+}
+
+#[tauri::command]
+pub async fn recover_vault(
+    state: State<'_, AppState>,
+    recovery_key: String,
+    new_password: String,
+) -> CommandResult<SessionStatus> {
+    let session = Arc::clone(&state.session);
+    let recovery_key = Zeroizing::new(recovery_key);
+    let new_password = Zeroizing::new(new_password);
+    blocking(move || session.recover_with_key(recovery_key, new_password)).await
+}
+
+#[tauri::command]
 pub fn lock_vault(state: State<'_, AppState>) -> SessionStatus {
     state.media_server.revoke_all();
     state.session.lock()
@@ -112,6 +167,20 @@ pub async fn set_delete_source_after_import(
 ) -> CommandResult<SessionStatus> {
     let session = Arc::clone(&state.session);
     blocking(move || session.set_delete_source_after_import(enabled)).await
+}
+
+#[tauri::command]
+pub async fn set_security_preferences(
+    state: State<'_, AppState>,
+    lock_on_blur: bool,
+    lock_on_suspend: bool,
+    clipboard_timeout_seconds: u64,
+) -> CommandResult<SessionStatus> {
+    let session = Arc::clone(&state.session);
+    blocking(move || {
+        session.set_security_preferences(lock_on_blur, lock_on_suspend, clipboard_timeout_seconds)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -216,6 +285,17 @@ pub async fn credential_page(
 }
 
 #[tauri::command]
+pub async fn credential_trash_page(
+    state: State<'_, AppState>,
+    cursor: Option<String>,
+    limit: u32,
+) -> CommandResult<CredentialPage> {
+    let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
+    let repository = Arc::clone(&state.credentials);
+    blocking(move || repository.trash_page(&key, cursor.as_deref(), limit)).await
+}
+
+#[tauri::command]
 pub async fn credential_detail(state: State<'_, AppState>, id: String) -> CommandResult<CredentialDetail> {
     let id = canonical_uuid(&id).map_err(public_error)?;
     let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
@@ -242,6 +322,29 @@ pub async fn delete_credential(state: State<'_, AppState>, id: String) -> Comman
 }
 
 #[tauri::command]
+pub async fn restore_credential(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    state.session.touch().map_err(public_error)?;
+    let id = canonical_uuid(&id).map_err(public_error)?;
+    let repository = Arc::clone(&state.credentials);
+    blocking(move || repository.restore(id)).await
+}
+
+#[tauri::command]
+pub async fn purge_credential(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    state.session.require_recent_reauthentication().map_err(public_error)?;
+    let id = canonical_uuid(&id).map_err(public_error)?;
+    let repository = Arc::clone(&state.credentials);
+    blocking(move || repository.purge(id)).await
+}
+
+#[tauri::command]
+pub async fn empty_credential_trash(state: State<'_, AppState>) -> CommandResult<usize> {
+    state.session.require_recent_reauthentication().map_err(public_error)?;
+    let repository = Arc::clone(&state.credentials);
+    blocking(move || repository.empty_trash()).await
+}
+
+#[tauri::command]
 pub async fn copy_credential_field(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -250,6 +353,7 @@ pub async fn copy_credential_field(
 ) -> CommandResult<()> {
     let id = canonical_uuid(&id).map_err(public_error)?;
     let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
+    let clipboard_timeout_seconds = state.session.clipboard_timeout_seconds();
     let repository = Arc::clone(&state.credentials);
     let secret = blocking(move || repository.field(&key, id, &field)).await?;
 
@@ -263,7 +367,7 @@ pub async fn copy_credential_field(
 
     let delayed_app = app.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(30)).await;
+        tokio::time::sleep(Duration::from_secs(clipboard_timeout_seconds)).await;
         let _ = tauri::async_runtime::spawn_blocking(move || {
             let Ok(current) = delayed_app.clipboard().read_text() else {
                 return;
@@ -282,6 +386,11 @@ pub async fn copy_credential_field(
 #[tauri::command]
 pub fn generate_password(length: usize, symbols: bool) -> CommandResult<GeneratedPassword> {
     create_password(length, symbols).map_err(public_error)
+}
+
+#[tauri::command]
+pub fn generate_password_advanced(options: PasswordGeneratorOptions) -> CommandResult<GeneratedPassword> {
+    generate_password_with_options(options).map_err(public_error)
 }
 
 #[tauri::command]
