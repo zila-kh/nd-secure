@@ -62,7 +62,7 @@
       {#if recoveryMode}
         Your offline recovery key unwraps the same vault root key, then immediately re-wraps it under a new master password. The recovery key itself is never stored.
       {:else if initialized}
-        Your master password derives a key-encryption key locally. The wrapped vault root key remains inside Rust while the vault is unlocked.
+        Your master password derives key material locally. The unwrapped vault root key remains inside Rust while the vault is unlocked.
       {:else}
         Choose a strong master password. You can create a one-time-view offline recovery key later from Security Settings.
       {/if}
@@ -144,7 +144,7 @@
               placeholder="Repeat master password"
               minlength={12}
               required
-            />
+          />
           </label>
           {#if confirmPassword && password !== confirmPassword}
             <p class="text-sm text-destructive">Passwords do not match.</p>
