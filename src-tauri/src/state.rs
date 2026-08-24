@@ -24,11 +24,7 @@ pub struct ClipboardTracker {
 
 impl ClipboardTracker {
     fn new() -> Self {
-        Self {
-            next_generation: AtomicU64::new(0),
-            tracked: Mutex::new(None),
-            operation: Mutex::new(()),
-        }
+        Self { next_generation: AtomicU64::new(0), tracked: Mutex::new(None), operation: Mutex::new(()) }
     }
 
     pub fn with_operation<T>(&self, operation: impl FnOnce() -> T) -> T {
