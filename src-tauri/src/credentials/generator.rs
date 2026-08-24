@@ -3,12 +3,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, VaultError};
 
-const LOWER_WITH_AMBIGUOUS: &[u8] =
-    b"abcdefghijklmnopqrstuvwxyz";
-const UPPER_WITH_AMBIGUOUS: &[u8] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-const NUMBERS_WITH_AMBIGUOUS: &[u8] =
-    b"0123456789";
+const LOWER_WITH_AMBIGUOUS: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
+const UPPER_WITH_AMBIGUOUS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const NUMBERS_WITH_AMBIGUOUS: &[u8] = b"0123456789";
 const LOWER_SAFE: &[u8] = b"abcdefghijkmnopqrstuvwxyz";
 const UPPER_SAFE: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ";
 const NUMBERS_SAFE: &[u8] = b"23456789";
@@ -56,14 +53,10 @@ pub fn generate_password(length: usize, symbols: bool) -> Result<GeneratedPasswo
 
 pub fn generate_password_with_options(options: PasswordGeneratorOptions) -> Result<GeneratedPassword> {
     if !(12..=128).contains(&options.length) {
-        return Err(VaultError::InvalidInput(
-            "generated password length must be between 12 and 128".into(),
-        ));
+        return Err(VaultError::InvalidInput("generated password length must be between 12 and 128".into()));
     }
     if !(options.lowercase || options.uppercase || options.numbers || options.symbols) {
-        return Err(VaultError::InvalidInput(
-            "enable at least one password character class".into(),
-        ));
+        return Err(VaultError::InvalidInput("enable at least one password character class".into()));
     }
     if options.min_numbers > options.length || options.min_symbols > options.length {
         return Err(VaultError::InvalidInput(
@@ -71,14 +64,10 @@ pub fn generate_password_with_options(options: PasswordGeneratorOptions) -> Resu
         ));
     }
     if options.min_numbers > 0 && !options.numbers {
-        return Err(VaultError::InvalidInput(
-            "minimum number count requires numbers to be enabled".into(),
-        ));
+        return Err(VaultError::InvalidInput("minimum number count requires numbers to be enabled".into()));
     }
     if options.min_symbols > 0 && !options.symbols {
-        return Err(VaultError::InvalidInput(
-            "minimum symbol count requires symbols to be enabled".into(),
-        ));
+        return Err(VaultError::InvalidInput("minimum symbol count requires symbols to be enabled".into()));
     }
 
     let lower = if options.exclude_ambiguous { LOWER_SAFE } else { LOWER_WITH_AMBIGUOUS };
@@ -169,14 +158,7 @@ mod tests {
             min_symbols: 4,
         })
         .unwrap();
-        assert!(
-            generated
-                .password
-                .bytes()
-                .filter(u8::is_ascii_digit)
-                .count()
-                >= 5
-        );
+        assert!(generated.password.bytes().filter(u8::is_ascii_digit).count() >= 5);
         assert!(generated.password.bytes().filter(|byte| SYMBOLS.contains(byte)).count() >= 4);
     }
 
