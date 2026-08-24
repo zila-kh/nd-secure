@@ -11,8 +11,8 @@ use zeroize::Zeroizing;
 use crate::{
     credentials::{
         generate_password as create_password, generate_password_with_options, generate_totp,
-        CredentialDetail, CredentialInput, CredentialPage, GeneratedPassword,
-        PasswordGeneratorOptions, TotpCode,
+        CredentialDetail, CredentialInput, CredentialPage, GeneratedPassword, PasswordGeneratorOptions,
+        TotpCode,
     },
     crypto::{CREDENTIALS_DOMAIN, GALLERY_DOMAIN},
     error::{Result, VaultError},
@@ -114,20 +114,14 @@ pub async fn change_master_password(
 }
 
 #[tauri::command]
-pub async fn create_recovery_key(
-    state: State<'_, AppState>,
-    password: String,
-) -> CommandResult<RecoveryKey> {
+pub async fn create_recovery_key(state: State<'_, AppState>, password: String) -> CommandResult<RecoveryKey> {
     let session = Arc::clone(&state.session);
     let password = Zeroizing::new(password);
     blocking(move || session.create_recovery_key(password)).await
 }
 
 #[tauri::command]
-pub async fn disable_recovery(
-    state: State<'_, AppState>,
-    password: String,
-) -> CommandResult<SessionStatus> {
+pub async fn disable_recovery(state: State<'_, AppState>, password: String) -> CommandResult<SessionStatus> {
     let session = Arc::clone(&state.session);
     let password = Zeroizing::new(password);
     blocking(move || session.disable_recovery(password)).await
