@@ -19,11 +19,21 @@ struct TrackedClipboard {
 pub struct ClipboardTracker {
     next_generation: AtomicU64,
     tracked: Mutex<Option<TrackedClipboard>>,
+    operation: Mutex<()>,
 }
 
 impl ClipboardTracker {
     fn new() -> Self {
-        Self { next_generation: AtomicU64::new(0), tracked: Mutex::new(None) }
+        Self {
+            next_generation: AtomicU64::new(0),
+            tracked: Mutex::new(None),
+            operation: Mutex::new(()),
+        }
+    }
+
+    pub fn with_operation<T>(&self, operation: impl FnOnce() -> T) -> T {
+        let _guard = self.operation.lock();
+        operation()
     }
 
     pub fn track(&self, digest: [u8; 32]) -> u64 {
