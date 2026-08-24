@@ -1,7 +1,7 @@
 <script lang="ts">
   import { open } from '@tauri-apps/plugin-dialog';
   import { CheckCircle2, LoaderCircle, Plus, RefreshCw, Trash2, X } from 'lucide-svelte';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { mediaUrl, vaultApi } from '../api';
   import type { GalleryItem } from '../types';
   import Button from './ui/Button.svelte';
@@ -16,6 +16,9 @@
   let notice = '';
   let selected: GalleryItem | null = null;
   let galleryRevision = 0;
+  let videoUrl = '';
+  let videoToken = '';
+  let videoLoading = false;
 
   async function refresh() {
     items = [];
@@ -90,9 +93,41 @@
     }
   }
 
+  function revokeVideoStream() {
+    const token = videoToken;
+    videoToken = '';
+    videoUrl = '';
+    videoLoading = false;
+    if (token) void vaultApi.closeMediaStream(token).catch(() => undefined);
+  }
+
+  async function openItem(item: GalleryItem) {
+    revokeVideoStream();
+    selected = item;
+    error = '';
+
+    if (!item.mimeType.startsWith('video/')) return;
+
+    videoLoading = true;
+    try {
+      const stream = await vaultApi.openMediaStream(item.id);
+      if (!selected || selected.id !== item.id) {
+        void vaultApi.closeMediaStream(stream.token).catch(() => undefined);
+        return;
+      }
+      videoToken = stream.token;
+      videoUrl = stream.url;
+    } catch (cause) {
+      if (selected?.id === item.id) error = `Unable to open encrypted video: ${String(cause)}`;
+    } finally {
+      if (selected?.id === item.id) videoLoading = false;
+    }
+  }
+
   async function removeSelected() {
     if (!selected) return;
     const selectedId = selected.id;
+    revokeVideoStream();
     try {
       await vaultApi.deleteMedia(selectedId);
       items = items.filter((item) => item.id !== selectedId);
@@ -103,11 +138,16 @@
   }
 
   function closeViewer() {
+    revokeVideoStream();
     selected = null;
   }
 
   onMount(() => {
     void loadMore();
+  });
+
+  onDestroy(() => {
+    revokeVideoStream();
   });
 </script>
 
@@ -141,7 +181,7 @@
 
   <div class="min-h-0 flex-1">
     {#key galleryRevision}
-      <VirtualGallery {items} onOpen={(item) => (selected = item)} onNearEnd={loadMore} />
+      <VirtualGallery {items} onOpen={openItem} onNearEnd={loadMore} />
     {/key}
   </div>
 
@@ -166,7 +206,15 @@
       </div>
       <div class="flex min-h-0 flex-1 items-center justify-center bg-black p-2">
         {#if selected.mimeType.startsWith('video/')}
-          <video src={mediaUrl(selected.id)} controls autoplay class="max-h-full max-w-full"></video>
+          {#if videoLoading}
+            <div class="flex items-center gap-2 text-sm text-white/70">
+              <LoaderCircle size={18} class="animate-spin" /> Preparing encrypted video stream…
+            </div>
+          {:else if videoUrl}
+            <video src={videoUrl} controls autoplay playsinline preload="metadata" class="max-h-full max-w-full"></video>
+          {:else}
+            <div class="text-sm text-white/70">Unable to load this encrypted video.</div>
+          {/if}
         {:else}
           <img src={mediaUrl(selected.id)} alt="Selected encrypted media" class="max-h-full max-w-full object-contain" />
         {/if}

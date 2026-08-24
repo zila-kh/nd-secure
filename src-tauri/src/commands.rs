@@ -40,6 +40,13 @@ pub struct ImportMediaResult {
     source_removal_enabled: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaStreamHandle {
+    url: String,
+    token: String,
+}
+
 fn public_error(error: VaultError) -> String {
     match error {
         VaultError::Storage(_) => "unable to access secure local storage".into(),
@@ -85,6 +92,7 @@ pub async fn unlock_vault(state: State<'_, AppState>, password: String) -> Comma
 
 #[tauri::command]
 pub fn lock_vault(state: State<'_, AppState>) -> SessionStatus {
+    state.media_server.revoke_all();
     state.session.lock()
 }
 
@@ -162,8 +170,26 @@ pub async fn import_media(
 pub async fn delete_media(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     state.session.touch().map_err(public_error)?;
     let id = canonical_uuid(&id).map_err(public_error)?;
+    state.media_server.revoke_media(id);
     let repository = Arc::clone(&state.gallery);
     blocking(move || repository.delete(id)).await
+}
+
+#[tauri::command]
+pub fn open_media_stream(state: State<'_, AppState>, id: String) -> CommandResult<MediaStreamHandle> {
+    state.session.touch().map_err(public_error)?;
+    let id = canonical_uuid(&id).map_err(public_error)?;
+    let item = state.gallery.get(id).map_err(public_error)?;
+    if !item.mime_type.starts_with("video/") {
+        return Err("media item is not a video".into());
+    }
+    let (url, token) = state.media_server.issue(id).map_err(public_error)?;
+    Ok(MediaStreamHandle { url, token })
+}
+
+#[tauri::command]
+pub fn close_media_stream(state: State<'_, AppState>, token: String) {
+    state.media_server.revoke(&token);
 }
 
 #[tauri::command]

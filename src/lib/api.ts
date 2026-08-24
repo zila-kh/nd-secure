@@ -6,6 +6,7 @@ import type {
   GalleryPage,
   GeneratedPassword,
   ImportMediaResult,
+  MediaStreamHandle,
   SessionStatus,
   TotpCode
 } from './types';
@@ -28,6 +29,8 @@ export const vaultApi = {
     invoke<GalleryPage>('gallery_page', { cursor, limit }),
   importMedia: (sources: string[]) => invoke<ImportMediaResult>('import_media', { sources }),
   deleteMedia: (id: string) => invoke<void>('delete_media', { id }),
+  openMediaStream: (id: string) => invoke<MediaStreamHandle>('open_media_stream', { id }),
+  closeMediaStream: (token: string) => invoke<void>('close_media_stream', { token }),
 
   credentialPage: (cursor: string | null = null, limit = 100, search = '') =>
     invoke<CredentialPage>('credential_page', { cursor, limit, search }),

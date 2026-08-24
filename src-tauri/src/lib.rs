@@ -3,6 +3,7 @@ mod credentials;
 mod crypto;
 mod error;
 mod gallery;
+mod media_server;
 mod paths;
 mod protocol;
 mod session;
@@ -17,8 +18,8 @@ use tauri::{
 };
 
 use crate::{
-    credentials::CredentialRepository, gallery::GalleryRepository, paths::VaultPaths, session::SessionState,
-    state::AppState,
+    credentials::CredentialRepository, gallery::GalleryRepository, media_server::MediaServer,
+    paths::VaultPaths, session::SessionState, state::AppState,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -58,6 +59,7 @@ pub fn run() {
 
             if should_lock {
                 if let Some(state) = window.try_state::<AppState>() {
+                    state.media_server.revoke_all();
                     state.session.lock();
                 }
             }
@@ -79,7 +81,8 @@ pub fn run() {
                 paths.gallery_thumbnails.clone(),
             )?);
             let credentials = Arc::new(CredentialRepository::new(paths.credentials_db.clone())?);
-            let state = AppState::new(session, gallery, credentials);
+            let media_server = Arc::new(MediaServer::start(Arc::clone(&session), Arc::clone(&gallery))?);
+            let state = AppState::new(session, gallery, credentials, media_server);
 
             if protocol_setup_state.set(state.clone()).is_err() {
                 return Err(std::io::Error::new(
@@ -101,6 +104,8 @@ pub fn run() {
             commands::gallery_page,
             commands::import_media,
             commands::delete_media,
+            commands::open_media_stream,
+            commands::close_media_stream,
             commands::credential_page,
             commands::credential_detail,
             commands::save_credential,
