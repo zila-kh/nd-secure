@@ -52,13 +52,17 @@ pub fn run() {
             });
         })
         .on_window_event(|window, event| {
-            let should_lock =
-                matches!(event, tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed);
-            #[cfg(mobile)]
-            let should_lock = should_lock || matches!(event, tauri::WindowEvent::Suspended);
+            if let Some(state) = window.try_state::<AppState>() {
+                let should_lock = matches!(
+                    event,
+                    tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+                ) || (matches!(event, tauri::WindowEvent::Focused(false))
+                    && state.session.lock_on_blur());
+                #[cfg(mobile)]
+                let should_lock = should_lock
+                    || (matches!(event, tauri::WindowEvent::Suspended) && state.session.lock_on_suspend());
 
-            if should_lock {
-                if let Some(state) = window.try_state::<AppState>() {
+                if should_lock {
                     state.media_server.revoke_all();
                     state.session.lock();
                 }
@@ -98,20 +102,31 @@ pub fn run() {
             commands::session_status,
             commands::initialize_vault,
             commands::unlock_vault,
+            commands::reauthenticate_vault,
+            commands::change_master_password,
+            commands::create_recovery_key,
+            commands::disable_recovery,
+            commands::recover_vault,
             commands::lock_vault,
             commands::set_auto_lock,
             commands::set_delete_source_after_import,
+            commands::set_security_preferences,
             commands::gallery_page,
             commands::import_media,
             commands::delete_media,
             commands::open_media_stream,
             commands::close_media_stream,
             commands::credential_page,
+            commands::credential_trash_page,
             commands::credential_detail,
             commands::save_credential,
             commands::delete_credential,
+            commands::restore_credential,
+            commands::purge_credential,
+            commands::empty_credential_trash,
             commands::copy_credential_field,
             commands::generate_password,
+            commands::generate_password_advanced,
             commands::credential_totp,
         ])
         .run(tauri::generate_context!())

@@ -1,21 +1,51 @@
 <script lang="ts">
   import { confirm } from '@tauri-apps/plugin-dialog';
-  import { Clock3, Database, HardDrive, MonitorOff, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-svelte';
+  import {
+    Clipboard,
+    Clock3,
+    Database,
+    HardDrive,
+    KeyRound,
+    MonitorOff,
+    ShieldAlert,
+    ShieldCheck,
+    Trash2
+  } from 'lucide-svelte';
+  import { onDestroy } from 'svelte';
   import { vaultApi } from '../api';
   import type { SessionStatus } from '../types';
+  import Button from './ui/Button.svelte';
   import Card from './ui/Card.svelte';
+  import Input from './ui/Input.svelte';
 
   export let status: SessionStatus;
   export let onStatus: (status: SessionStatus) => void;
 
   let saving = false;
   let savingSourcePolicy = false;
+  let savingLifecycle = false;
+  let passwordBusy = false;
+  let recoveryBusy = false;
   let error = '';
+  let success = '';
   let autoLockSeconds = status.autoLockSeconds;
   let deleteSourceAfterImport = status.deleteSourceAfterImport;
+  let lockOnBlur = status.lockOnBlur;
+  let lockOnSuspend = status.lockOnSuspend;
+  let clipboardTimeoutSeconds = status.clipboardTimeoutSeconds;
+  let currentPassword = '';
+  let newPassword = '';
+  let confirmNewPassword = '';
+  let recoveryPassword = '';
+  let generatedRecoveryKey = '';
 
   $: if (!saving) autoLockSeconds = status.autoLockSeconds;
   $: if (!savingSourcePolicy) deleteSourceAfterImport = status.deleteSourceAfterImport;
+  $: if (!savingLifecycle) {
+    lockOnBlur = status.lockOnBlur;
+    lockOnSuspend = status.lockOnSuspend;
+    clipboardTimeoutSeconds = status.clipboardTimeoutSeconds;
+  }
 
   async function updateAutoLock() {
     saving = true;
@@ -23,8 +53,10 @@
       const next = await vaultApi.setAutoLock(Number(autoLockSeconds));
       onStatus(next);
       error = '';
+      success = 'Automatic lock policy updated.';
     } catch (cause) {
       error = String(cause);
+      success = '';
     } finally {
       saving = false;
     }
@@ -50,23 +82,121 @@
       deleteSourceAfterImport = next.deleteSourceAfterImport;
       onStatus(next);
       error = '';
+      success = 'Source-file policy updated.';
     } catch (cause) {
       deleteSourceAfterImport = previous;
       error = String(cause);
+      success = '';
     } finally {
       savingSourcePolicy = false;
     }
   }
+
+  async function updateLifecycle() {
+    savingLifecycle = true;
+    try {
+      const next = await vaultApi.setSecurityPreferences(
+        lockOnBlur,
+        lockOnSuspend,
+        Number(clipboardTimeoutSeconds)
+      );
+      onStatus(next);
+      error = '';
+      success = 'Lifecycle and clipboard protections updated.';
+    } catch (cause) {
+      error = String(cause);
+      success = '';
+    } finally {
+      savingLifecycle = false;
+    }
+  }
+
+  async function changePassword() {
+    if (newPassword !== confirmNewPassword) return;
+    passwordBusy = true;
+    try {
+      const next = await vaultApi.changeMasterPassword(currentPassword, newPassword);
+      onStatus(next);
+      currentPassword = '';
+      newPassword = '';
+      confirmNewPassword = '';
+      error = '';
+      success = 'Master password changed. Vault data keys were not re-encrypted.';
+    } catch (cause) {
+      error = String(cause);
+      success = '';
+    } finally {
+      passwordBusy = false;
+    }
+  }
+
+  async function createRecovery() {
+    recoveryBusy = true;
+    generatedRecoveryKey = '';
+    try {
+      if (status.recoveryConfigured) {
+        const approved = await confirm(
+          'Creating a new recovery key invalidates the previous recovery key. Continue only if you are ready to replace your offline copy.',
+          { title: 'Replace recovery key?', kind: 'warning' }
+        );
+        if (!approved) return;
+      }
+      const recovery = await vaultApi.createRecoveryKey(recoveryPassword);
+      generatedRecoveryKey = recovery.recoveryKey;
+      recoveryPassword = '';
+      onStatus(await vaultApi.status());
+      error = '';
+      success = 'Recovery key created. Store it offline before leaving this screen.';
+    } catch (cause) {
+      error = String(cause);
+      success = '';
+    } finally {
+      recoveryBusy = false;
+    }
+  }
+
+  async function disableRecovery() {
+    const approved = await confirm(
+      'This removes the recovery envelope. Your existing printed/saved recovery key will stop working immediately.',
+      { title: 'Disable vault recovery?', kind: 'warning' }
+    );
+    if (!approved) return;
+    recoveryBusy = true;
+    try {
+      const next = await vaultApi.disableRecovery(recoveryPassword);
+      onStatus(next);
+      recoveryPassword = '';
+      generatedRecoveryKey = '';
+      error = '';
+      success = 'Offline recovery disabled.';
+    } catch (cause) {
+      error = String(cause);
+      success = '';
+    } finally {
+      recoveryBusy = false;
+    }
+  }
+
+  onDestroy(() => {
+    currentPassword = '';
+    newPassword = '';
+    confirmNewPassword = '';
+    recoveryPassword = '';
+    generatedRecoveryKey = '';
+  });
 </script>
 
 <section class="animate-fadeIn h-full overflow-auto pb-10">
   <header class="mb-5">
     <h2 class="text-2xl font-semibold tracking-tight">Security Settings</h2>
-    <p class="text-sm text-muted-foreground">Local security, import safety, and session behavior for this device.</p>
+    <p class="text-sm text-muted-foreground">Envelope encryption, recovery, local lifecycle locks, and import safety for this device.</p>
   </header>
 
   {#if error}
     <div class="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>
+  {/if}
+  {#if success}
+    <div class="mb-4 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-foreground">{success}</div>
   {/if}
 
   <div class="grid gap-4 lg:grid-cols-2">
@@ -75,7 +205,7 @@
         <div class="rounded-lg bg-primary/15 p-2 text-primary"><Clock3 size={20} /></div>
         <div>
           <h3 class="font-medium">Automatic lock</h3>
-          <p class="text-xs text-muted-foreground">Idle commands cause the Rust key session to expire.</p>
+          <p class="text-xs text-muted-foreground">Idle Rust sessions expire and zeroize their root key.</p>
         </div>
       </div>
       <label class="block space-y-2 text-sm">
@@ -93,6 +223,81 @@
           <option value={3600}>1 hour</option>
         </select>
       </label>
+    </Card>
+
+    <Card className="p-5">
+      <div class="mb-4 flex items-center gap-3">
+        <div class="rounded-lg bg-primary/15 p-2 text-primary"><Clipboard size={20} /></div>
+        <div>
+          <h3 class="font-medium">Lifecycle and clipboard</h3>
+          <p class="text-xs text-muted-foreground">Reduce plaintext exposure when attention leaves the vault.</p>
+        </div>
+      </div>
+      <div class="space-y-3 text-sm">
+        <label class="flex items-start gap-3 rounded-lg border border-border p-3">
+          <input type="checkbox" bind:checked={lockOnBlur} on:change={updateLifecycle} disabled={savingLifecycle} class="mt-0.5 h-4 w-4 accent-primary" />
+          <span><span class="block font-medium">Lock when the app loses focus</span><span class="text-xs text-muted-foreground">Useful on shared desktops; can be inconvenient during normal switching.</span></span>
+        </label>
+        <label class="flex items-start gap-3 rounded-lg border border-border p-3">
+          <input type="checkbox" bind:checked={lockOnSuspend} on:change={updateLifecycle} disabled={savingLifecycle} class="mt-0.5 h-4 w-4 accent-primary" />
+          <span><span class="block font-medium">Lock on mobile suspension/background</span><span class="text-xs text-muted-foreground">Enabled by default and enforced in Rust where Tauri reports suspension.</span></span>
+        </label>
+        <label class="block space-y-2">
+          <span>Clear copied secrets after</span>
+          <select bind:value={clipboardTimeoutSeconds} on:change={updateLifecycle} disabled={savingLifecycle} class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+            <option value={10}>10 seconds</option>
+            <option value={30}>30 seconds</option>
+            <option value={60}>1 minute</option>
+            <option value={120}>2 minutes</option>
+          </select>
+          <span class="block text-xs text-muted-foreground">ND Secure only clears the clipboard if it still contains the exact secret it copied.</span>
+        </label>
+      </div>
+    </Card>
+
+    <Card className="p-5 lg:col-span-2">
+      <div class="mb-4 flex items-center gap-3">
+        <div class="rounded-lg bg-primary/15 p-2 text-primary"><KeyRound size={20} /></div>
+        <div>
+          <h3 class="font-medium">Master password and vault root key</h3>
+          <p class="text-xs text-muted-foreground">The password protects a wrapping key for the vault root key; changing it does not rewrite gallery or credential ciphertext.</p>
+        </div>
+      </div>
+      <form on:submit|preventDefault={changePassword} class="grid gap-3 md:grid-cols-3">
+        <label class="space-y-1.5"><span class="text-xs font-medium">Current master password</span><Input type="password" bind:value={currentPassword} autocomplete="current-password" required /></label>
+        <label class="space-y-1.5"><span class="text-xs font-medium">New master password</span><Input type="password" bind:value={newPassword} autocomplete="new-password" minlength={12} required /></label>
+        <label class="space-y-1.5"><span class="text-xs font-medium">Confirm new password</span><Input type="password" bind:value={confirmNewPassword} autocomplete="new-password" minlength={12} required /></label>
+        <div class="md:col-span-3 flex flex-wrap items-center justify-between gap-3">
+          <p class="text-xs text-muted-foreground">A fresh salt and Argon2id password key are generated atomically; HKDF separates the AES wrapping key. The encrypted root key remains stable.</p>
+          <Button type="submit" disabled={passwordBusy || currentPassword.length < 12 || newPassword.length < 12 || newPassword !== confirmNewPassword}>Change master password</Button>
+        </div>
+        {#if confirmNewPassword && newPassword !== confirmNewPassword}<p class="text-sm text-destructive md:col-span-3">New passwords do not match.</p>{/if}
+      </form>
+    </Card>
+
+    <Card className="p-5 lg:col-span-2">
+      <div class="mb-4 flex items-center gap-3">
+        <div class="rounded-lg bg-primary/15 p-2 text-primary"><ShieldCheck size={20} /></div>
+        <div>
+          <h3 class="font-medium">Offline recovery key</h3>
+          <p class="text-xs text-muted-foreground">Optional recovery envelope for resetting a forgotten master password without a server.</p>
+        </div>
+      </div>
+      <div class="space-y-3">
+        <div class="flex flex-col gap-2 sm:flex-row">
+          <Input type="password" bind:value={recoveryPassword} autocomplete="current-password" placeholder="Confirm current master password" className="flex-1" />
+          <Button on:click={createRecovery} disabled={recoveryBusy || recoveryPassword.length < 12}>{status.recoveryConfigured ? 'Replace recovery key' : 'Create recovery key'}</Button>
+          {#if status.recoveryConfigured}<Button variant="destructive" on:click={disableRecovery} disabled={recoveryBusy || recoveryPassword.length < 12}>Disable recovery</Button>{/if}
+        </div>
+        <p class="text-xs text-muted-foreground">The recovery key is never persisted by ND Secure. It is present in the webview only while you generate, view, or enter it. Replacing it invalidates the old one. Anyone with the key and your vault files can reset the master password.</p>
+        {#if generatedRecoveryKey}
+          <div class="rounded-lg border border-primary/30 bg-primary/10 p-4">
+            <div class="mb-2 text-sm font-medium">Save this key offline now — it will not be shown again</div>
+            <code class="block select-all break-all rounded bg-background p-3 text-xs">{generatedRecoveryKey}</code>
+            <p class="mt-2 text-xs text-muted-foreground">Prefer paper or an independently encrypted offline location. Do not store it inside this same vault.</p>
+          </div>
+        {/if}
+      </div>
     </Card>
 
     <Card className="p-5">
@@ -125,13 +330,13 @@
         <div class="rounded-lg bg-primary/15 p-2 text-primary"><ShieldCheck size={20} /></div>
         <div>
           <h3 class="font-medium">Key isolation</h3>
-          <p class="text-xs text-muted-foreground">One unlock, separate cryptographic domains.</p>
+          <p class="text-xs text-muted-foreground">One wrapped vault root, separate cryptographic domains.</p>
         </div>
       </div>
       <ul class="space-y-2 text-sm text-muted-foreground">
-        <li>Gallery and credentials use separate HKDF-derived root keys.</li>
-        <li>The master key is not persisted or sent to JavaScript.</li>
-        <li>Android suspension invalidates the unlocked Rust session.</li>
+        <li>New vaults use a random 256-bit root key wrapped by an Argon2id + HKDF-derived AES key.</li>
+        <li>Gallery and credentials use separate HKDF-derived domain keys.</li>
+        <li>The unwrapped root key and password-derived key material remain in Rust and are not returned to the webview.</li>
       </ul>
     </Card>
 
@@ -144,7 +349,7 @@
         </div>
       </div>
       <p class="text-sm text-muted-foreground">
-        Media and generated image thumbnails are stored as independently authenticated encrypted chunks. Credential payloads are encrypted per record. Original media names and source paths are not retained.
+        Media and generated image thumbnails are stored as independently authenticated encrypted chunks. Credential payloads, folders, custom fields, password history, project names, and environment names are encrypted per record. Original media names and source paths are not retained.
       </p>
     </Card>
 
@@ -183,7 +388,7 @@
         </div>
       </div>
       <p class="text-sm text-muted-foreground">
-        UUIDs, item counts, record types, timestamps, media MIME types, media sizes, and thumbnail availability remain visible in SQLite. Passwords, usernames, notes, websites, TOTP seeds, media bytes, and thumbnail pixels are encrypted.
+        UUIDs, item counts, record types, record state (active/trash), timestamps, media MIME types, media sizes, and thumbnail availability remain visible in SQLite. Passwords, usernames, notes, websites, custom fields, project/environment names, TOTP seeds, media bytes, and thumbnail pixels are encrypted.
       </p>
     </Card>
   </div>
