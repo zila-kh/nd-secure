@@ -87,35 +87,76 @@ impl CredentialRepository {
         page_for_state(&connection, root_key, cursor.as_ref(), limit, 0)
     }
 
-    pub fn delete(&self, id: Uuid) -> Result<()> {
-        let _writer = self.writer.lock();
-        let connection = self.connection()?;
-        let now = unix_timestamp()?;
-        let changed = connection.execute(
-            "UPDATE credential_records
-             SET state = 0, updated_at = ?2
-             WHERE id = ?1 AND state = 1",
-            params![id.to_string(), now],
-        )?;
-        if changed == 0 {
-            return Err(VaultError::NotFound);
-        }
-        Ok(())
+    pub fn delete(&self, root_key: &[u8; 32], id: Uuid) -> Result<()> {
+        self.transition_state(root_key, id, 1, 0)
     }
 
-    pub fn restore(&self, id: Uuid) -> Result<()> {
+    pub fn restore(&self, root_key: &[u8; 32], id: Uuid) -> Result<()> {
+        self.transition_state(root_key, id, 0, 1)
+    }
+
+    fn transition_state(&self, root_key: &[u8; 32], id: Uuid, from_state: i64, to_state: i64) -> Result<()> {
+        if !matches!((from_state, to_state), (1, 0) | (0, 1)) {
+            return Err(VaultError::InvalidInput("invalid credential state transition".into()));
+        }
+
         let _writer = self.writer.lock();
-        let connection = self.connection()?;
-        let now = unix_timestamp()?;
-        let changed = connection.execute(
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let row = transaction
+            .query_row(
+                "SELECT id, record_type, record_salt, nonce, ciphertext, format_version,
+                        revision, created_at, updated_at
+                 FROM credential_records WHERE id = ?1 AND state = ?2",
+                params![id.to_string(), from_state],
+                map_encrypted_row,
+            )
+            .optional()?
+            .ok_or(VaultError::NotFound)?;
+        let mut detail = decrypt_row(root_key, &row)?;
+        let revision = row.revision.checked_add(1).ok_or(VaultError::AuthenticationFailed)?;
+        let updated_at = unix_timestamp()?.max(row.updated_at.saturating_add(1));
+        detail.updated_at = updated_at;
+
+        let salt = random_array::<16>();
+        let nonce = random_array::<12>();
+        let key = record_key(root_key, &salt, id)?;
+        let plaintext = Zeroizing::new(serde_json::to_vec(&detail)?);
+        let cipher = Aes256Gcm::new_from_slice(key.as_ref()).map_err(|_| VaultError::Crypto)?;
+        let ciphertext = cipher
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: plaintext.as_slice(),
+                    aad: &record_aad(id, detail.record_type, revision),
+                },
+            )
+            .map_err(|_| VaultError::Crypto)?;
+
+        let changed = transaction.execute(
             "UPDATE credential_records
-             SET state = 1, updated_at = ?2
-             WHERE id = ?1 AND state = 0",
-            params![id.to_string(), now],
+             SET record_salt = ?2,
+                 nonce = ?3,
+                 ciphertext = ?4,
+                 revision = ?5,
+                 state = ?6,
+                 updated_at = ?7
+             WHERE id = ?1 AND state = ?8",
+            params![
+                id.to_string(),
+                salt.as_slice(),
+                nonce.as_slice(),
+                ciphertext,
+                revision,
+                to_state,
+                updated_at,
+                from_state,
+            ],
         )?;
-        if changed == 0 {
+        if changed != 1 {
             return Err(VaultError::NotFound);
         }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -286,15 +327,37 @@ mod trash_tests {
         let saved = repository.save(&key, input()).unwrap();
         let id = Uuid::parse_str(&saved.id).unwrap();
 
-        repository.delete(id).unwrap();
+        repository.delete(&key, id).unwrap();
         assert!(matches!(repository.detail(&key, id), Err(VaultError::NotFound)));
         let trash = repository.trash_page(&key, None, 10).unwrap();
         assert_eq!(trash.items.len(), 1);
         assert_eq!(trash.items[0].id, saved.id);
+        assert!(trash.items[0].updated_at > saved.updated_at);
 
-        repository.restore(id).unwrap();
-        assert_eq!(repository.detail(&key, id).unwrap().title, "Trash test");
+        let deleted_at = trash.items[0].updated_at;
+        repository.restore(&key, id).unwrap();
+        let restored = repository.detail(&key, id).unwrap();
+        assert_eq!(restored.title, "Trash test");
+        assert!(restored.updated_at > deleted_at);
         assert!(repository.trash_page(&key, None, 10).unwrap().items.is_empty());
+    }
+
+    #[test]
+    fn trash_transition_after_time_passes_preserves_authenticated_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = CredentialRepository::new(directory.path().join("credentials.sqlite3")).unwrap();
+        let key = [25_u8; 32];
+        let saved = repository.save(&key, input()).unwrap();
+        let id = Uuid::parse_str(&saved.id).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        repository.delete(&key, id).unwrap();
+        let trash = repository.trash_page(&key, None, 10).unwrap();
+        assert_eq!(trash.items.len(), 1);
+        assert!(trash.items[0].updated_at > saved.updated_at);
+
+        repository.restore(&key, id).unwrap();
+        assert_eq!(repository.detail(&key, id).unwrap().title, "Trash test");
     }
 
     #[test]
@@ -306,7 +369,7 @@ mod trash_tests {
         let id = Uuid::parse_str(&saved.id).unwrap();
 
         assert!(matches!(repository.purge(id), Err(VaultError::NotFound)));
-        repository.delete(id).unwrap();
+        repository.delete(&key, id).unwrap();
         repository.purge(id).unwrap();
         assert!(repository.trash_page(&key, None, 10).unwrap().items.is_empty());
     }
