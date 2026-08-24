@@ -22,42 +22,7 @@ impl CredentialRepository {
         let connection = self.connection()?;
 
         if query.is_empty() && project_filter.is_none() && environment_filter.is_none() {
-            let requested = limit.saturating_add(1);
-            let mut summaries = Vec::with_capacity(requested);
-            if let Some(cursor) = cursor.as_ref() {
-                let mut statement = connection.prepare_cached(
-                    "SELECT id, record_type, record_salt, nonce, ciphertext, format_version,
-                            revision, created_at, updated_at
-                     FROM credential_records
-                     WHERE state = 1
-                       AND (updated_at < ?1 OR (updated_at = ?1 AND id < ?2))
-                     ORDER BY updated_at DESC, id DESC
-                     LIMIT ?3",
-                )?;
-                let rows = statement.query_map(
-                    params![cursor.updated_at, cursor.id.as_str(), requested as i64],
-                    map_encrypted_row,
-                )?;
-                for row in rows {
-                    summaries.push(summary_from_detail(decrypt_row(root_key, &row?)?));
-                }
-            } else {
-                let mut statement = connection.prepare_cached(
-                    "SELECT id, record_type, record_salt, nonce, ciphertext, format_version,
-                            revision, created_at, updated_at
-                     FROM credential_records
-                     WHERE state = 1
-                     ORDER BY updated_at DESC, id DESC
-                     LIMIT ?1",
-                )?;
-                let rows = statement.query_map(params![requested as i64], map_encrypted_row)?;
-                for row in rows {
-                    summaries.push(summary_from_detail(decrypt_row(root_key, &row?)?));
-                }
-            }
-            let has_more = summaries.len() > limit;
-            summaries.truncate(limit);
-            return page_from_summaries(summaries, has_more);
+            return page_for_state(&connection, root_key, cursor.as_ref(), limit, 1);
         }
 
         let mut statement = connection.prepare(
@@ -88,7 +53,9 @@ impl CredentialRepository {
                 None => true,
             };
             let matches_environment = environment_filter
-                .map(|environment| detail.environment.as_deref().is_some_and(|value| value.eq_ignore_ascii_case(environment)))
+                .map(|environment| {
+                    detail.environment.as_deref().is_some_and(|value| value.eq_ignore_ascii_case(environment))
+                })
                 .unwrap_or(true);
             if matches_search && matches_project && matches_environment {
                 summaries.push(summary_from_detail(detail));
@@ -108,17 +75,68 @@ impl CredentialRepository {
         page_from_summaries(summaries, has_more)
     }
 
+    pub fn trash_page(
+        &self,
+        root_key: &[u8; 32],
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<CredentialPage> {
+        let limit = limit.clamp(1, 500) as usize;
+        let cursor = cursor.map(decode_cursor).transpose()?;
+        let connection = self.connection()?;
+        page_for_state(&connection, root_key, cursor.as_ref(), limit, 0)
+    }
+
     pub fn delete(&self, id: Uuid) -> Result<()> {
         let _writer = self.writer.lock();
         let connection = self.connection()?;
+        let now = unix_timestamp()?;
         let changed = connection.execute(
-            "DELETE FROM credential_records WHERE id = ?1",
+            "UPDATE credential_records
+             SET state = 0, updated_at = ?2
+             WHERE id = ?1 AND state = 1",
+            params![id.to_string(), now],
+        )?;
+        if changed == 0 {
+            return Err(VaultError::NotFound);
+        }
+        Ok(())
+    }
+
+    pub fn restore(&self, id: Uuid) -> Result<()> {
+        let _writer = self.writer.lock();
+        let connection = self.connection()?;
+        let now = unix_timestamp()?;
+        let changed = connection.execute(
+            "UPDATE credential_records
+             SET state = 1, updated_at = ?2
+             WHERE id = ?1 AND state = 0",
+            params![id.to_string(), now],
+        )?;
+        if changed == 0 {
+            return Err(VaultError::NotFound);
+        }
+        Ok(())
+    }
+
+    pub fn purge(&self, id: Uuid) -> Result<()> {
+        let _writer = self.writer.lock();
+        let connection = self.connection()?;
+        let changed = connection.execute(
+            "DELETE FROM credential_records WHERE id = ?1 AND state = 0",
             params![id.to_string()],
         )?;
         if changed == 0 {
             return Err(VaultError::NotFound);
         }
         Ok(())
+    }
+
+    pub fn empty_trash(&self) -> Result<usize> {
+        let _writer = self.writer.lock();
+        let connection = self.connection()?;
+        let deleted = connection.execute("DELETE FROM credential_records WHERE state = 0", [])?;
+        Ok(deleted)
     }
 
     pub fn field(&self, root_key: &[u8; 32], id: Uuid, field: &str) -> Result<Zeroizing<String>> {
@@ -174,7 +192,9 @@ impl CredentialRepository {
                 updated_at INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_credentials_updated_id
-             ON credential_records(updated_at DESC, id DESC);",
+             ON credential_records(updated_at DESC, id DESC);
+             CREATE INDEX IF NOT EXISTS idx_credentials_state_updated_id
+             ON credential_records(state, updated_at DESC, id DESC);",
         )?;
         Ok(())
     }
@@ -186,5 +206,108 @@ impl CredentialRepository {
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         Ok(connection)
+    }
+}
+
+fn page_for_state(
+    connection: &Connection,
+    root_key: &[u8; 32],
+    cursor: Option<&Cursor>,
+    limit: usize,
+    state: i64,
+) -> Result<CredentialPage> {
+    let requested = limit.saturating_add(1);
+    let mut summaries = Vec::with_capacity(requested);
+    if let Some(cursor) = cursor {
+        let mut statement = connection.prepare_cached(
+            "SELECT id, record_type, record_salt, nonce, ciphertext, format_version,
+                    revision, created_at, updated_at
+             FROM credential_records
+             WHERE state = ?1
+               AND (updated_at < ?2 OR (updated_at = ?2 AND id < ?3))
+             ORDER BY updated_at DESC, id DESC
+             LIMIT ?4",
+        )?;
+        let rows = statement.query_map(
+            params![state, cursor.updated_at, cursor.id.as_str(), requested as i64],
+            map_encrypted_row,
+        )?;
+        for row in rows {
+            summaries.push(summary_from_detail(decrypt_row(root_key, &row?)?));
+        }
+    } else {
+        let mut statement = connection.prepare_cached(
+            "SELECT id, record_type, record_salt, nonce, ciphertext, format_version,
+                    revision, created_at, updated_at
+             FROM credential_records
+             WHERE state = ?1
+             ORDER BY updated_at DESC, id DESC
+             LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![state, requested as i64], map_encrypted_row)?;
+        for row in rows {
+            summaries.push(summary_from_detail(decrypt_row(root_key, &row?)?));
+        }
+    }
+    let has_more = summaries.len() > limit;
+    summaries.truncate(limit);
+    page_from_summaries(summaries, has_more)
+}
+
+#[cfg(test)]
+mod trash_tests {
+    use super::*;
+
+    fn input() -> CredentialInput {
+        CredentialInput {
+            id: None,
+            record_type: CredentialType::Login,
+            title: "Trash test".into(),
+            scope: CredentialScope::Central,
+            project: None,
+            environment: None,
+            folder: None,
+            username: Some("person@example.com".into()),
+            password: Some("correct-horse-battery-staple".into()),
+            secret_value: None,
+            websites: vec!["https://example.com".into()],
+            notes: None,
+            totp_secret: None,
+            custom_fields: Vec::new(),
+            favorite: false,
+        }
+    }
+
+    #[test]
+    fn delete_moves_record_to_encrypted_trash_and_restore_returns_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = CredentialRepository::new(directory.path().join("credentials.sqlite3")).unwrap();
+        let key = [23_u8; 32];
+        let saved = repository.save(&key, input()).unwrap();
+        let id = Uuid::parse_str(&saved.id).unwrap();
+
+        repository.delete(id).unwrap();
+        assert!(matches!(repository.detail(&key, id), Err(VaultError::NotFound)));
+        let trash = repository.trash_page(&key, None, 10).unwrap();
+        assert_eq!(trash.items.len(), 1);
+        assert_eq!(trash.items[0].id, saved.id);
+
+        repository.restore(id).unwrap();
+        assert_eq!(repository.detail(&key, id).unwrap().title, "Trash test");
+        assert!(repository.trash_page(&key, None, 10).unwrap().items.is_empty());
+    }
+
+    #[test]
+    fn purge_only_removes_records_already_in_trash() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = CredentialRepository::new(directory.path().join("credentials.sqlite3")).unwrap();
+        let key = [29_u8; 32];
+        let saved = repository.save(&key, input()).unwrap();
+        let id = Uuid::parse_str(&saved.id).unwrap();
+
+        assert!(matches!(repository.purge(id), Err(VaultError::NotFound)));
+        repository.delete(id).unwrap();
+        repository.purge(id).unwrap();
+        assert!(repository.trash_page(&key, None, 10).unwrap().items.is_empty());
     }
 }
