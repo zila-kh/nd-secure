@@ -5,6 +5,15 @@ export interface SessionStatus {
   locked: boolean;
   autoLockSeconds: number;
   deleteSourceAfterImport: boolean;
+  lockOnBlur: boolean;
+  lockOnSuspend: boolean;
+  clipboardTimeoutSeconds: number;
+  recoveryConfigured: boolean;
+  recentlyReauthenticated: boolean;
+}
+
+export interface RecoveryKey {
+  recoveryKey: string;
 }
 
 export interface GalleryItem {
@@ -101,6 +110,17 @@ export interface CredentialDetail extends CredentialInput {
 export interface GeneratedPassword {
   password: string;
   entropyBits: number;
+}
+
+export interface PasswordGeneratorOptions {
+  length: number;
+  lowercase: boolean;
+  uppercase: boolean;
+  numbers: boolean;
+  symbols: boolean;
+  excludeAmbiguous: boolean;
+  minNumbers: number;
+  minSymbols: number;
 }
 
 export interface TotpCode {
