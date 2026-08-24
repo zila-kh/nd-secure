@@ -44,6 +44,17 @@ export interface MediaStreamHandle {
 export type CredentialType = 'login' | 'secure_note' | 'totp' | 'secret';
 export type CredentialScope = 'central' | 'project';
 
+export interface CredentialField {
+  name: string;
+  value: string;
+  hidden: boolean;
+}
+
+export interface PasswordHistoryEntry {
+  password: string;
+  changedAt: number;
+}
+
 export interface CredentialSummary {
   id: string;
   recordType: CredentialType;
@@ -51,6 +62,7 @@ export interface CredentialSummary {
   scope: CredentialScope;
   project?: string | null;
   environment?: string | null;
+  folder?: string | null;
   username?: string | null;
   favorite: boolean;
   updatedAt: number;
@@ -68,17 +80,20 @@ export interface CredentialInput {
   scope: CredentialScope;
   project?: string;
   environment?: string;
+  folder?: string;
   username?: string;
   password?: string;
   secretValue?: string;
   websites: string[];
   notes?: string;
   totpSecret?: string;
+  customFields: CredentialField[];
   favorite: boolean;
 }
 
 export interface CredentialDetail extends CredentialInput {
   id: string;
+  passwordHistory: PasswordHistoryEntry[];
   createdAt: number;
   updatedAt: number;
 }

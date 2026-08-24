@@ -71,53 +71,31 @@ impl CredentialRepository {
             let detail = decrypt_row(root_key, &row?)?;
             let matches_search = query.is_empty()
                 || detail.title.to_lowercase().contains(&query)
-                || detail
-                    .project
-                    .as_deref()
-                    .map(|value| value.to_lowercase().contains(&query))
-                    .unwrap_or(false)
-                || detail
-                    .environment
-                    .as_deref()
-                    .map(|value| value.to_lowercase().contains(&query))
-                    .unwrap_or(false)
-                || detail
-                    .username
-                    .as_deref()
-                    .map(|value| value.to_lowercase().contains(&query))
-                    .unwrap_or(false)
-                || detail.websites.iter().any(|value| value.to_lowercase().contains(&query));
+                || detail.folder.as_deref().is_some_and(|value| value.to_lowercase().contains(&query))
+                || detail.project.as_deref().is_some_and(|value| value.to_lowercase().contains(&query))
+                || detail.environment.as_deref().is_some_and(|value| value.to_lowercase().contains(&query))
+                || detail.username.as_deref().is_some_and(|value| value.to_lowercase().contains(&query))
+                || detail.websites.iter().any(|value| value.to_lowercase().contains(&query))
+                || detail.custom_fields.iter().any(|field| {
+                    field.name.to_lowercase().contains(&query)
+                        || (!field.hidden && field.value.to_lowercase().contains(&query))
+                });
             let matches_project = match project_filter {
                 Some("__central__") => detail.scope == CredentialScope::Central,
                 Some("__project__") => detail.scope == CredentialScope::Project,
-                Some(project) => {
-                    detail.scope == CredentialScope::Project
-                        && detail
-                            .project
-                            .as_deref()
-                            .map(|value| value.eq_ignore_ascii_case(project))
-                            .unwrap_or(false)
-                }
+                Some(project) => detail.scope == CredentialScope::Project
+                    && detail.project.as_deref().is_some_and(|value| value.eq_ignore_ascii_case(project)),
                 None => true,
             };
             let matches_environment = environment_filter
-                .map(|environment| {
-                    detail
-                        .environment
-                        .as_deref()
-                        .map(|value| value.eq_ignore_ascii_case(environment))
-                        .unwrap_or(false)
-                })
+                .map(|environment| detail.environment.as_deref().is_some_and(|value| value.eq_ignore_ascii_case(environment)))
                 .unwrap_or(true);
             if matches_search && matches_project && matches_environment {
                 summaries.push(summary_from_detail(detail));
             }
         }
         summaries.sort_by(|left, right| {
-            right
-                .updated_at
-                .cmp(&left.updated_at)
-                .then_with(|| right.id.cmp(&left.id))
+            right.updated_at.cmp(&left.updated_at).then_with(|| right.id.cmp(&left.id))
         });
         if let Some(cursor) = cursor {
             summaries.retain(|item| {
@@ -143,18 +121,23 @@ impl CredentialRepository {
         Ok(())
     }
 
-    pub fn field(
-        &self,
-        root_key: &[u8; 32],
-        id: Uuid,
-        field: &str,
-    ) -> Result<Zeroizing<String>> {
+    pub fn field(&self, root_key: &[u8; 32], id: Uuid, field: &str) -> Result<Zeroizing<String>> {
         let detail = self.detail(root_key, id)?;
         let value = match field {
             "username" => detail.username.unwrap_or_default(),
             "password" => detail.password.unwrap_or_default(),
             "secret" => detail.secret_value.unwrap_or_default(),
             "notes" => detail.notes.unwrap_or_default(),
+            _ if field.starts_with("custom:") => {
+                let index = field[7..]
+                    .parse::<usize>()
+                    .map_err(|_| VaultError::InvalidInput("invalid custom field index".into()))?;
+                detail
+                    .custom_fields
+                    .get(index)
+                    .map(|item| item.value.clone())
+                    .ok_or_else(|| VaultError::InvalidInput("custom field not found".into()))?
+            }
             _ => return Err(VaultError::InvalidInput("unsupported credential field".into())),
         };
         if value.is_empty() {

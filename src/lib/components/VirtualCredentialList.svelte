@@ -13,17 +13,14 @@
   let observer: ResizeObserver | undefined;
   let lastRequestedLength = -1;
 
-  const rowHeight = 82;
+  const rowHeight = 86;
   const overscanRows = 5;
 
   $: rowCount = items.length;
   $: totalHeight = rowCount * rowHeight;
   $: startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - overscanRows);
   $: endRow = Math.min(rowCount, Math.ceil((scrollTop + height) / rowHeight) + overscanRows);
-  $: visibleItems = items.slice(startRow, endRow).map((item, index) => ({
-    item,
-    absoluteIndex: startRow + index
-  }));
+  $: visibleItems = items.slice(startRow, endRow).map((item, index) => ({ item, absoluteIndex: startRow + index }));
   $: if (items.length < lastRequestedLength) lastRequestedLength = -1;
   $: if (items.length > 0 && endRow >= rowCount - 10 && lastRequestedLength !== items.length) {
     lastRequestedLength = items.length;
@@ -44,8 +41,7 @@
   }
 
   function typeLabel(item: CredentialSummary) {
-    if (item.recordType === 'secret') return 'secret key';
-    return item.recordType.replace('_', ' ');
+    return item.recordType === 'secret' ? 'secret key' : item.recordType.replace('_', ' ');
   }
 
   onMount(() => {
@@ -57,23 +53,12 @@
   onDestroy(() => observer?.disconnect());
 </script>
 
-<div
-  bind:this={viewport}
-  on:scroll={onScroll}
-  class="relative h-full min-h-[300px] overflow-auto rounded-xl border border-border bg-card"
-  aria-label="Encrypted credential items"
->
+<div bind:this={viewport} on:scroll={onScroll} class="relative h-full min-h-[300px] overflow-auto rounded-xl border border-border bg-card" aria-label="Encrypted credential items">
   <div class="relative" style={`height:${totalHeight}px`}>
     {#each visibleItems as entry (entry.item.id)}
       {@const Icon = entry.item.recordType === 'secure_note' ? FileText : KeyRound}
-      <button
-        class="absolute left-0 flex w-full items-center gap-3 border-b border-border px-4 text-left transition-colors hover:bg-accent focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-        style={`top:${entry.absoluteIndex * rowHeight}px;height:${rowHeight}px`}
-        on:click={() => onOpen(entry.item)}
-      >
-        <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-          <svelte:component this={Icon} size={19} />
-        </div>
+      <button class="absolute left-0 flex w-full items-center gap-3 border-b border-border px-4 text-left transition-colors hover:bg-accent focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" style={`top:${entry.absoluteIndex * rowHeight}px;height:${rowHeight}px`} on:click={() => onOpen(entry.item)}>
+        <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><svelte:component this={Icon} size={19} /></div>
         <div class="min-w-0 flex-1">
           <div class="flex items-center gap-2">
             <span class="truncate font-medium">{entry.item.title}</span>
@@ -81,12 +66,11 @@
           </div>
           <div class="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <span class="rounded bg-muted px-1.5 py-0.5 text-[11px] uppercase tracking-wide">{scopeLabel(entry.item)}</span>
+            {#if entry.item.folder}<span class="truncate">{entry.item.folder}</span>{/if}
             <span class="truncate">{entry.item.username || typeLabel(entry.item)}</span>
           </div>
         </div>
-        <time class="hidden text-xs text-muted-foreground sm:block">
-          {new Date(entry.item.updatedAt * 1000).toLocaleDateString()}
-        </time>
+        <time class="hidden text-xs text-muted-foreground sm:block">{new Date(entry.item.updatedAt * 1000).toLocaleDateString()}</time>
       </button>
     {/each}
   </div>
@@ -94,10 +78,7 @@
   {#if items.length === 0}
     <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center text-muted-foreground">
       <KeyRound size={38} />
-      <div>
-        <p class="font-medium text-foreground">No credentials found</p>
-        <p class="text-sm">Create a central secret or a credential for a project environment.</p>
-      </div>
+      <div><p class="font-medium text-foreground">No credentials found</p><p class="text-sm">Create an encrypted login, secret, note, or TOTP record.</p></div>
     </div>
   {/if}
 </div>

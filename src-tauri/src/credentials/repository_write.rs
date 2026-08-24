@@ -13,19 +13,13 @@ impl CredentialRepository {
         let _writer = self.writer.lock();
         let connection = self.connection()?;
         let now = unix_timestamp()?;
-        let (id, created_at, revision) = if let Some(id) = input.id.as_deref() {
+        let (id, created_at, revision, previous) = if let Some(id) = input.id.as_deref() {
             let id = parse_uuid(id)?;
-            let existing: Option<(i64, i64)> = connection
-                .query_row(
-                    "SELECT created_at, revision FROM credential_records WHERE id = ?1 AND state = 1",
-                    params![id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?;
-            let (created_at, revision) = existing.ok_or(VaultError::NotFound)?;
-            (id, created_at, revision.saturating_add(1))
+            let row = encrypted_row(&connection, id)?;
+            let previous = decrypt_row(root_key, &row)?;
+            (id, row.created_at, row.revision.saturating_add(1), Some(previous))
         } else {
-            (Uuid::new_v4(), now, 1)
+            (Uuid::new_v4(), now, 1, None)
         };
 
         let record_type = input.record_type;
@@ -35,6 +29,7 @@ impl CredentialRepository {
             CredentialScope::Project => clean_optional(input.project),
         };
         let environment = clean_optional(input.environment);
+        let folder = clean_optional(input.folder);
         let username = clean_optional(input.username);
         let password = input.password.filter(|value| !value.is_empty());
         let secret_value = input.secret_value.filter(|value| !value.is_empty());
@@ -46,12 +41,43 @@ impl CredentialRepository {
             .collect();
         let notes = input.notes.filter(|value| !value.is_empty());
         let totp_secret = clean_optional(input.totp_secret);
+        let custom_fields: Vec<CredentialField> = input
+            .custom_fields
+            .into_iter()
+            .map(|field| CredentialField {
+                name: field.name.trim().to_owned(),
+                value: field.value,
+                hidden: field.hidden,
+            })
+            .filter(|field| !field.name.is_empty() || !field.value.is_empty())
+            .collect();
         let (username, password, secret_value, websites, totp_secret) = match record_type {
             CredentialType::Login => (username, password, None, websites, None),
             CredentialType::SecureNote => (None, None, None, Vec::new(), None),
             CredentialType::Totp => (username, None, None, Vec::new(), totp_secret),
             CredentialType::Secret => (None, None, secret_value, Vec::new(), None),
         };
+
+        let mut password_history = previous
+            .as_ref()
+            .map(|item| item.password_history.clone())
+            .unwrap_or_default();
+        if record_type == CredentialType::Login {
+            if let Some(previous) = previous.as_ref() {
+                if previous.record_type == CredentialType::Login && previous.password != password {
+                    if let Some(old_password) = previous.password.as_ref().filter(|value| !value.is_empty()) {
+                        password_history.insert(
+                            0,
+                            PasswordHistoryEntry { password: old_password.clone(), changed_at: now },
+                        );
+                    }
+                }
+            }
+            password_history.truncate(MAX_PASSWORD_HISTORY);
+        } else {
+            password_history.clear();
+        }
+
         let detail = CredentialDetail {
             id: id.to_string(),
             record_type,
@@ -59,12 +85,15 @@ impl CredentialRepository {
             scope,
             project,
             environment,
+            folder,
             username,
             password,
             secret_value,
             websites,
             notes,
             totp_secret,
+            custom_fields,
+            password_history,
             favorite: input.favorite,
             created_at,
             updated_at: now,

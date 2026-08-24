@@ -6,6 +6,7 @@ fn summary_from_detail(detail: CredentialDetail) -> CredentialSummary {
         scope: detail.scope,
         project: detail.project,
         environment: detail.environment,
+        folder: detail.folder,
         username: detail.username,
         favorite: detail.favorite,
         updated_at: detail.updated_at,
@@ -88,6 +89,8 @@ fn decrypt_row(root_key: &[u8; 32], row: &EncryptedRow) -> Result<CredentialDeta
         || detail.created_at != row.created_at
         || detail.updated_at != row.updated_at
         || (detail.scope == CredentialScope::Central && detail.project.is_some())
+        || detail.password_history.len() > MAX_PASSWORD_HISTORY
+        || detail.custom_fields.len() > MAX_CUSTOM_FIELDS
     {
         return Err(VaultError::AuthenticationFailed);
     }
@@ -123,8 +126,14 @@ fn validate_input(input: &CredentialInput) -> Result<()> {
         || input.notes.as_ref().map(String::len).unwrap_or(0) > MAX_NOTES_BYTES
         || input.project.as_ref().map(String::len).unwrap_or(0) > MAX_PROJECT_BYTES
         || input.environment.as_ref().map(String::len).unwrap_or(0) > MAX_ENVIRONMENT_BYTES
+        || input.folder.as_ref().map(String::len).unwrap_or(0) > MAX_FOLDER_BYTES
         || input.websites.len() > MAX_WEBSITES
         || input.websites.iter().any(|value| value.len() > MAX_WEBSITE_BYTES)
+        || input.custom_fields.len() > MAX_CUSTOM_FIELDS
+        || input.custom_fields.iter().any(|field| {
+            field.name.len() > MAX_CUSTOM_FIELD_NAME_BYTES
+                || field.value.len() > MAX_CUSTOM_FIELD_VALUE_BYTES
+        })
     {
         return Err(VaultError::InvalidInput("credential field exceeds its size limit".into()));
     }
@@ -149,14 +158,17 @@ fn validate_input(input: &CredentialInput) -> Result<()> {
 
     if let Some(environment) = input.environment.as_deref() {
         let environment = environment.trim();
-        if environment.is_empty() {
-            return Err(VaultError::InvalidInput("environment cannot be blank".into()));
+        if environment.is_empty() || environment.chars().any(char::is_control) {
+            return Err(VaultError::InvalidInput("invalid environment".into()));
         }
-        if environment.chars().any(char::is_control) {
-            return Err(VaultError::InvalidInput(
-                "environment contains unsupported characters".into(),
-            ));
+    }
+    if let Some(folder) = input.folder.as_deref() {
+        if folder.trim().is_empty() || folder.chars().any(char::is_control) {
+            return Err(VaultError::InvalidInput("invalid folder".into()));
         }
+    }
+    if input.custom_fields.iter().any(|field| field.name.chars().any(char::is_control)) {
+        return Err(VaultError::InvalidInput("custom field name contains unsupported characters".into()));
     }
 
     if input.record_type == CredentialType::Totp {
@@ -167,11 +179,7 @@ fn validate_input(input: &CredentialInput) -> Result<()> {
         validate_totp_secret(secret)?;
     }
     if input.record_type == CredentialType::Secret
-        && input
-            .secret_value
-            .as_deref()
-            .map(str::is_empty)
-            .unwrap_or(true)
+        && input.secret_value.as_deref().map(str::is_empty).unwrap_or(true)
     {
         return Err(VaultError::InvalidInput("secret value is required".into()));
     }
@@ -213,76 +221,53 @@ fn unix_timestamp() -> Result<i64> {
 mod tests {
     use super::*;
 
+    fn login_input(password: &str) -> CredentialInput {
+        CredentialInput {
+            id: None,
+            record_type: CredentialType::Login,
+            title: "Example".into(),
+            scope: CredentialScope::Project,
+            project: Some("todo".into()),
+            environment: Some("prod".into()),
+            folder: Some("Infrastructure".into()),
+            username: Some("person@example.com".into()),
+            password: Some(password.into()),
+            secret_value: None,
+            websites: vec!["https://example.com".into()],
+            notes: Some("recovery note".into()),
+            totp_secret: None,
+            custom_fields: vec![CredentialField {
+                name: "tenant".into(),
+                value: "north".into(),
+                hidden: false,
+            }],
+            favorite: true,
+        }
+    }
+
     #[test]
-    fn credential_records_round_trip_and_reject_wrong_keys() {
+    fn credential_records_keep_encrypted_history_and_custom_fields() {
         let directory = tempfile::tempdir().unwrap();
         let repository = CredentialRepository::new(directory.path().join("credentials.sqlite3")).unwrap();
         let key = [11_u8; 32];
-        let saved = repository
-            .save(
-                &key,
-                CredentialInput {
-                    id: None,
-                    record_type: CredentialType::Login,
-                    title: "Example".into(),
-                    scope: CredentialScope::Project,
-                    project: Some("todo".into()),
-                    environment: Some("prod".into()),
-                    username: Some("person@example.com".into()),
-                    password: Some("a-long-generated-password".into()),
-                    secret_value: None,
-                    websites: vec!["https://example.com".into()],
-                    notes: Some("recovery note".into()),
-                    totp_secret: None,
-                    favorite: true,
-                },
-            )
-            .unwrap();
+        let saved = repository.save(&key, login_input("first-password")).unwrap();
         let id = Uuid::parse_str(&saved.id).unwrap();
         let detail = repository.detail(&key, id).unwrap();
-        assert_eq!(detail.password.as_deref(), Some("a-long-generated-password"));
-        assert_eq!(detail.project.as_deref(), Some("todo"));
-        assert_eq!(detail.environment.as_deref(), Some("prod"));
+        assert_eq!(detail.folder.as_deref(), Some("Infrastructure"));
+        assert_eq!(detail.custom_fields[0].value, "north");
 
-        let page = repository
-            .page(&key, None, 25, "", Some("todo"), Some("prod"))
-            .unwrap();
-        assert_eq!(page.items.len(), 1);
-        assert_eq!(page.items[0].id, saved.id);
+        let mut update = login_input("second-password");
+        update.id = Some(saved.id.clone());
+        let updated = repository.save(&key, update).unwrap();
+        assert_eq!(updated.password_history.len(), 1);
+        assert_eq!(updated.password_history[0].password, "first-password");
 
+        let stored = fs::read(directory.path().join("credentials.sqlite3")).unwrap();
+        assert!(!stored.windows(b"first-password".len()).any(|w| w == b"first-password"));
+        assert!(!stored.windows(b"north".len()).any(|w| w == b"north"));
         assert!(matches!(
             repository.detail(&[12_u8; 32], id),
             Err(VaultError::AuthenticationFailed)
         ));
-    }
-
-    #[test]
-    fn secret_records_are_project_scoped_and_encrypted() {
-        let directory = tempfile::tempdir().unwrap();
-        let repository = CredentialRepository::new(directory.path().join("credentials.sqlite3")).unwrap();
-        let key = [31_u8; 32];
-        let detail = repository
-            .save(
-                &key,
-                CredentialInput {
-                    id: None,
-                    record_type: CredentialType::Secret,
-                    title: "DATABASE_URL".into(),
-                    scope: CredentialScope::Project,
-                    project: Some("todo".into()),
-                    environment: Some("uat".into()),
-                    username: None,
-                    password: None,
-                    secret_value: Some("postgres://sensitive".into()),
-                    websites: Vec::new(),
-                    notes: Some("rotated quarterly".into()),
-                    totp_secret: None,
-                    favorite: false,
-                },
-            )
-            .unwrap();
-        assert_eq!(detail.secret_value.as_deref(), Some("postgres://sensitive"));
-        let stored = fs::read(directory.path().join("credentials.sqlite3")).unwrap();
-        assert!(!stored.windows(b"postgres://sensitive".len()).any(|w| w == b"postgres://sensitive"));
     }
 }

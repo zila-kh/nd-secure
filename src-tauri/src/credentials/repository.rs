@@ -30,8 +30,13 @@ const MAX_SECRET_BYTES: usize = 64 * 1024;
 const MAX_NOTES_BYTES: usize = 1024 * 1024;
 const MAX_PROJECT_BYTES: usize = 256;
 const MAX_ENVIRONMENT_BYTES: usize = 64;
+const MAX_FOLDER_BYTES: usize = 256;
 const MAX_WEBSITES: usize = 64;
 const MAX_WEBSITE_BYTES: usize = 4096;
+const MAX_CUSTOM_FIELDS: usize = 32;
+const MAX_CUSTOM_FIELD_NAME_BYTES: usize = 256;
+const MAX_CUSTOM_FIELD_VALUE_BYTES: usize = 64 * 1024;
+const MAX_PASSWORD_HISTORY: usize = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -73,6 +78,22 @@ pub enum CredentialScope {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CredentialField {
+    pub name: String,
+    pub value: String,
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordHistoryEntry {
+    pub password: String,
+    pub changed_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CredentialInput {
     pub id: Option<String>,
     pub record_type: CredentialType,
@@ -83,6 +104,8 @@ pub struct CredentialInput {
     pub project: Option<String>,
     #[serde(default)]
     pub environment: Option<String>,
+    #[serde(default)]
+    pub folder: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
     #[serde(default)]
@@ -90,6 +113,8 @@ pub struct CredentialInput {
     pub websites: Vec<String>,
     pub notes: Option<String>,
     pub totp_secret: Option<String>,
+    #[serde(default)]
+    pub custom_fields: Vec<CredentialField>,
     pub favorite: bool,
 }
 
@@ -105,6 +130,8 @@ pub struct CredentialDetail {
     pub project: Option<String>,
     #[serde(default)]
     pub environment: Option<String>,
+    #[serde(default)]
+    pub folder: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
     #[serde(default)]
@@ -112,6 +139,10 @@ pub struct CredentialDetail {
     pub websites: Vec<String>,
     pub notes: Option<String>,
     pub totp_secret: Option<String>,
+    #[serde(default)]
+    pub custom_fields: Vec<CredentialField>,
+    #[serde(default)]
+    pub password_history: Vec<PasswordHistoryEntry>,
     pub favorite: bool,
     pub created_at: i64,
     pub updated_at: i64,
@@ -126,6 +157,7 @@ pub struct CredentialSummary {
     pub scope: CredentialScope,
     pub project: Option<String>,
     pub environment: Option<String>,
+    pub folder: Option<String>,
     pub username: Option<String>,
     pub favorite: bool,
     pub updated_at: i64,
