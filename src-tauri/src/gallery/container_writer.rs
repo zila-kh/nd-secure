@@ -119,6 +119,11 @@ pub fn encrypt_reader<R: Read>(
         return Err(VaultError::Storage("generated media identifier already exists".into()));
     }
     fs::rename(partial_path, final_path)?;
+    if let Some(parent) = final_path.parent() {
+        if let Ok(directory) = fs::File::open(parent) {
+            let _ = directory.sync_all();
+        }
+    }
     Ok(metadata)
 }
 
