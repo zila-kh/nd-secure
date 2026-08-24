@@ -55,7 +55,7 @@
       status = status.initialized
         ? await vaultApi.unlock(password)
         : await vaultApi.initialize(password, status.autoLockSeconds);
-      lastActivityHeartbeat = Date.now();
+      lastActivityHeartbeat = performance.now();
     } catch (cause) {
       error = String(cause);
     } finally {
@@ -68,7 +68,7 @@
     error = '';
     try {
       status = await vaultApi.recover(recoveryKey, newPassword);
-      lastActivityHeartbeat = Date.now();
+      lastActivityHeartbeat = performance.now();
     } catch (cause) {
       error = String(cause);
     } finally {
@@ -88,7 +88,7 @@
   function recordUserActivity(event: Event) {
     if (status.locked || !event.isTrusted || activityHeartbeatPending) return;
 
-    const now = Date.now();
+    const now = performance.now();
     if (now - lastActivityHeartbeat < ACTIVITY_HEARTBEAT_MS) return;
     lastActivityHeartbeat = now;
     activityHeartbeatPending = true;
