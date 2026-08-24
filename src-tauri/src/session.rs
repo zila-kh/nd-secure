@@ -186,11 +186,7 @@ impl SessionState {
         }
     }
 
-    pub fn initialize(
-        &self,
-        password: Zeroizing<String>,
-        auto_lock_seconds: u64,
-    ) -> Result<SessionStatus> {
+    pub fn initialize(&self, password: Zeroizing<String>, auto_lock_seconds: u64) -> Result<SessionStatus> {
         let _lifecycle = self.lifecycle.lock();
         if self.header_path.exists() {
             return Err(VaultError::AlreadyInitialized);
@@ -373,15 +369,11 @@ impl SessionState {
         let recovery_key = Zeroizing::new(random_array::<32>());
         let nonce = random_array::<12>();
         let recovery_wrap_key = derive_domain_key(&recovery_key, RECOVERY_WRAP_KEY_DOMAIN)?;
-        let cipher =
-            Aes256Gcm::new_from_slice(recovery_wrap_key.as_ref()).map_err(|_| VaultError::Crypto)?;
+        let cipher = Aes256Gcm::new_from_slice(recovery_wrap_key.as_ref()).map_err(|_| VaultError::Crypto)?;
         let ciphertext = cipher
             .encrypt(
                 Nonce::from_slice(&nonce),
-                Payload {
-                    msg: root_key.as_ref(),
-                    aad: &recovery_wrap_aad(&header)?,
-                },
+                Payload { msg: root_key.as_ref(), aad: &recovery_wrap_aad(&header)? },
             )
             .map_err(|_| VaultError::Crypto)?;
         header.recovery_nonce = BASE64.encode(nonce);
@@ -457,11 +449,7 @@ impl SessionState {
         self.reset_attempts();
         self.apply_header_to_inner(
             &header,
-            Some(UnlockedSession {
-                root_key,
-                last_activity: Instant::now(),
-                reauthenticated_at: None,
-            }),
+            Some(UnlockedSession { root_key, last_activity: Instant::now(), reauthenticated_at: None }),
         );
         Ok(self.status())
     }
@@ -680,10 +668,8 @@ fn validate_password(password: &str) -> Result<()> {
 }
 
 fn validate_header(header: &VaultHeader) -> Result<()> {
-    if !matches!(
-        header.version,
-        LEGACY_HEADER_VERSION | PREVIOUS_HEADER_VERSION | HEADER_VERSION
-    ) || !(32_768..=1_048_576).contains(&header.argon_memory_kib)
+    if !matches!(header.version, LEGACY_HEADER_VERSION | PREVIOUS_HEADER_VERSION | HEADER_VERSION)
+        || !(32_768..=1_048_576).contains(&header.argon_memory_kib)
         || !(1..=10).contains(&header.argon_iterations)
         || !(1..=16).contains(&header.argon_parallelism)
         || !(MIN_AUTO_LOCK_SECONDS..=MAX_AUTO_LOCK_SECONDS).contains(&header.auto_lock_seconds)
@@ -702,7 +688,11 @@ fn validate_header(header: &VaultHeader) -> Result<()> {
     Ok(())
 }
 
-fn migrate_header_to_v3(header: &mut VaultHeader, password_key: &[u8; 32], root_key: &[u8; 32]) -> Result<()> {
+fn migrate_header_to_v3(
+    header: &mut VaultHeader,
+    password_key: &[u8; 32],
+    root_key: &[u8; 32],
+) -> Result<()> {
     if header.version == LEGACY_HEADER_VERSION {
         header.delete_source_after_import = false;
     }
@@ -743,10 +733,7 @@ fn wrap_root_key(header: &mut VaultHeader, password_key: &[u8; 32], root_key: &[
     let wrap_key = derive_domain_key(password_key, PASSWORD_WRAP_KEY_DOMAIN)?;
     let cipher = Aes256Gcm::new_from_slice(wrap_key.as_ref()).map_err(|_| VaultError::Crypto)?;
     let ciphertext = cipher
-        .encrypt(
-            Nonce::from_slice(&nonce),
-            Payload { msg: root_key, aad: &root_wrap_aad(header)? },
-        )
+        .encrypt(Nonce::from_slice(&nonce), Payload { msg: root_key, aad: &root_wrap_aad(header)? })
         .map_err(|_| VaultError::Crypto)?;
     header.wrapped_root_nonce = BASE64.encode(nonce);
     header.wrapped_root_ciphertext = BASE64.encode(ciphertext);
@@ -762,16 +749,10 @@ fn unwrap_root_key(header: &VaultHeader, password_key: &[u8; 32]) -> Result<Zero
     let cipher = Aes256Gcm::new_from_slice(wrap_key.as_ref()).map_err(|_| VaultError::Crypto)?;
     let plaintext = Zeroizing::new(
         cipher
-            .decrypt(
-                Nonce::from_slice(&nonce),
-                Payload { msg: &ciphertext, aad: &root_wrap_aad(header)? },
-            )
+            .decrypt(Nonce::from_slice(&nonce), Payload { msg: &ciphertext, aad: &root_wrap_aad(header)? })
             .map_err(|_| VaultError::AuthenticationFailed)?,
     );
-    let root: [u8; 32] = plaintext
-        .as_slice()
-        .try_into()
-        .map_err(|_| VaultError::AuthenticationFailed)?;
+    let root: [u8; 32] = plaintext.as_slice().try_into().map_err(|_| VaultError::AuthenticationFailed)?;
     Ok(Zeroizing::new(root))
 }
 
@@ -790,8 +771,7 @@ fn unwrap_recovery_root(header: &VaultHeader, recovery_key: &[u8; 32]) -> Result
             )
             .map_err(|_| VaultError::InvalidPassword)?,
     );
-    let root: [u8; 32] =
-        plaintext.as_slice().try_into().map_err(|_| VaultError::AuthenticationFailed)?;
+    let root: [u8; 32] = plaintext.as_slice().try_into().map_err(|_| VaultError::AuthenticationFailed)?;
     Ok(Zeroizing::new(root))
 }
 
@@ -809,7 +789,8 @@ fn seal_root_verifier(header: &mut VaultHeader, root_key: &[u8; 32]) -> Result<(
 
 fn verify_root_verifier(header: &VaultHeader, root_key: &[u8; 32]) -> Result<bool> {
     let nonce = decode_array::<12>(&header.verifier_nonce)?;
-    let ciphertext = BASE64.decode(header.verifier_ciphertext.as_bytes()).map_err(|_| VaultError::AuthenticationFailed)?;
+    let ciphertext =
+        BASE64.decode(header.verifier_ciphertext.as_bytes()).map_err(|_| VaultError::AuthenticationFailed)?;
     let aad = root_verifier_aad(header)?;
     let cipher = Aes256Gcm::new_from_slice(root_key).map_err(|_| VaultError::Crypto)?;
     let plaintext = cipher.decrypt(Nonce::from_slice(&nonce), Payload { msg: &ciphertext, aad: &aad });
@@ -824,9 +805,8 @@ fn verify_root_verifier(header: &VaultHeader, root_key: &[u8; 32]) -> Result<boo
 
 fn verify_legacy_verifier(header: &VaultHeader, password_key: &[u8; 32]) -> Result<bool> {
     let nonce = decode_array::<12>(&header.verifier_nonce)?;
-    let ciphertext = BASE64
-        .decode(header.verifier_ciphertext.as_bytes())
-        .map_err(|_| VaultError::InvalidPassword)?;
+    let ciphertext =
+        BASE64.decode(header.verifier_ciphertext.as_bytes()).map_err(|_| VaultError::InvalidPassword)?;
     let aad = legacy_verifier_aad(header)?;
     let cipher = Aes256Gcm::new_from_slice(password_key).map_err(|_| VaultError::Crypto)?;
     let plaintext = cipher.decrypt(Nonce::from_slice(&nonce), Payload { msg: &ciphertext, aad: &aad });
@@ -859,8 +839,7 @@ fn legacy_verifier_aad(header: &VaultHeader) -> Result<Vec<u8>> {
 }
 
 fn root_wrap_aad(header: &VaultHeader) -> Result<Vec<u8>> {
-    let mut aad =
-        Vec::with_capacity(ROOT_WRAP_AAD_DOMAIN.len() + 96);
+    let mut aad = Vec::with_capacity(ROOT_WRAP_AAD_DOMAIN.len() + 96);
     aad.extend_from_slice(ROOT_WRAP_AAD_DOMAIN);
     aad.extend_from_slice(&header.version.to_be_bytes());
     append_aad_field(&mut aad, header.vault_id.as_bytes())?;
@@ -919,9 +898,7 @@ fn derive_password_key(
         Params::new(memory_kib, iterations, parallelism, Some(32)).map_err(|_| VaultError::Crypto)?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut output = Zeroizing::new([0_u8; 32]);
-    argon
-        .hash_password_into(password.as_bytes(), salt, output.as_mut())
-        .map_err(|_| VaultError::Crypto)?;
+    argon.hash_password_into(password.as_bytes(), salt, output.as_mut()).map_err(|_| VaultError::Crypto)?;
     Ok(output)
 }
 
@@ -933,9 +910,8 @@ fn decode_recovery_key(value: &str) -> Result<Zeroizing<[u8; 32]>> {
     let decoded = URL_SAFE_NO_PAD
         .decode(encoded.as_bytes())
         .map_err(|_| VaultError::InvalidInput("invalid recovery-key encoding".into()))?;
-    let key: [u8; 32] = decoded
-        .try_into()
-        .map_err(|_| VaultError::InvalidInput("invalid recovery-key length".into()))?;
+    let key: [u8; 32] =
+        decoded.try_into().map_err(|_| VaultError::InvalidInput("invalid recovery-key length".into()))?;
     Ok(Zeroizing::new(key))
 }
 
@@ -947,9 +923,7 @@ fn decode_array<const N: usize>(value: &str) -> Result<[u8; N]> {
     let decoded = BASE64
         .decode(value.as_bytes())
         .map_err(|_| VaultError::InvalidInput("invalid vault header encoding".into()))?;
-    decoded
-        .try_into()
-        .map_err(|_| VaultError::InvalidInput("invalid vault header length".into()))
+    decoded.try_into().map_err(|_| VaultError::InvalidInput("invalid vault header length".into()))
 }
 
 fn read_header(path: &Path) -> Option<VaultHeader> {
@@ -1051,10 +1025,7 @@ mod tests {
         assert!(!unlocked.locked);
         assert!(unlocked.delete_source_after_import);
         assert_eq!(
-            state
-                .domain_key(crate::crypto::GALLERY_DOMAIN)
-                .unwrap()
-                .as_ref(),
+            state.domain_key(crate::crypto::GALLERY_DOMAIN).unwrap().as_ref(),
             expected_gallery.as_ref()
         );
 
@@ -1129,15 +1100,10 @@ mod tests {
         let new_password = "recovered horse battery staple";
         state.initialize(Zeroizing::new(old_password.to_owned()), 300).unwrap();
         let before = state.domain_key(crate::crypto::GALLERY_DOMAIN).unwrap();
-        let recovery = state
-            .create_recovery_key(Zeroizing::new(old_password.to_owned()))
-            .unwrap();
+        let recovery = state.create_recovery_key(Zeroizing::new(old_password.to_owned())).unwrap();
         state.lock();
         state
-            .recover_with_key(
-                Zeroizing::new(recovery.recovery_key),
-                Zeroizing::new(new_password.to_owned()),
-            )
+            .recover_with_key(Zeroizing::new(recovery.recovery_key), Zeroizing::new(new_password.to_owned()))
             .unwrap();
         let after = state.domain_key(crate::crypto::GALLERY_DOMAIN).unwrap();
         assert_eq!(before.as_ref(), after.as_ref());
@@ -1149,41 +1115,23 @@ mod tests {
     fn session_initializes_with_secure_lifecycle_defaults() {
         let directory = tempfile::tempdir().unwrap();
         let state = SessionState::new(directory.path().join("vault-header.json"));
-        let initialized = state
-            .initialize(
-                Zeroizing::new("correct horse battery staple".to_owned()),
-                300,
-            )
-            .unwrap();
+        let initialized =
+            state.initialize(Zeroizing::new("correct horse battery staple".to_owned()), 300).unwrap();
         assert!(initialized.initialized);
         assert!(!initialized.locked);
         assert!(!initialized.delete_source_after_import);
         assert!(!initialized.lock_on_blur);
         assert!(initialized.lock_on_suspend);
-        assert_eq!(
-            initialized.clipboard_timeout_seconds,
-            DEFAULT_CLIPBOARD_TIMEOUT_SECONDS
-        );
+        assert_eq!(initialized.clipboard_timeout_seconds, DEFAULT_CLIPBOARD_TIMEOUT_SECONDS);
         assert!(!initialized.recovery_configured);
         assert!(initialized.recently_reauthenticated);
         assert_ne!(
-            state
-                .domain_key(crate::crypto::GALLERY_DOMAIN)
-                .unwrap()
-                .as_ref(),
-            state
-                .domain_key(crate::crypto::CREDENTIALS_DOMAIN)
-                .unwrap()
-                .as_ref()
+            state.domain_key(crate::crypto::GALLERY_DOMAIN).unwrap().as_ref(),
+            state.domain_key(crate::crypto::CREDENTIALS_DOMAIN).unwrap().as_ref()
         );
     }
 
-    fn write_legacy_test_header(
-        path: &Path,
-        password: &str,
-        version: u16,
-        delete_source_after_import: bool,
-    ) {
+    fn write_legacy_test_header(path: &Path, password: &str, version: u16, delete_source_after_import: bool) {
         let salt = [7_u8; 16];
         let nonce = [9_u8; 12];
         let key = derive_password_key(password, &salt, 65_536, 3, 1).unwrap();
@@ -1209,10 +1157,7 @@ mod tests {
         let cipher = Aes256Gcm::new_from_slice(key.as_ref()).unwrap();
         let aad = legacy_verifier_aad(&header).unwrap();
         let ciphertext = cipher
-            .encrypt(
-                Nonce::from_slice(&nonce),
-                Payload { msg: LEGACY_VERIFIER_PLAINTEXT, aad: &aad },
-            )
+            .encrypt(Nonce::from_slice(&nonce), Payload { msg: LEGACY_VERIFIER_PLAINTEXT, aad: &aad })
             .unwrap();
         header.verifier_ciphertext = BASE64.encode(ciphertext);
         write_header(path, &header).unwrap();
