@@ -194,8 +194,8 @@
         <div class="flex items-center justify-between"><div><div class="text-sm font-medium">Custom fields</div><p class="text-xs text-muted-foreground">Hidden values are excluded from search and remain encrypted at rest.</p></div><Button variant="secondary" size="sm" type="button" on:click={addCustomField} disabled={customFields.length >= 32}><Plus size={15} /> Add</Button></div>
         {#each customFields as field, index}
           <div class="grid gap-2 rounded-lg bg-muted/40 p-3 sm:grid-cols-[1fr_1fr_auto_auto]">
-            <Input value={field.name} on:input={(event) => updateCustomField(index, { name: event.currentTarget.value })} placeholder="Field name" />
-            <Input type={field.hidden ? 'password' : 'text'} value={field.value} on:input={(event) => updateCustomField(index, { value: event.currentTarget.value })} placeholder="Value" autocomplete="off" />
+            <Input value={field.name} on:input={(event) => updateCustomField(index, { name: (event.currentTarget as HTMLInputElement).value })} placeholder="Field name" />
+            <Input type={field.hidden ? 'password' : 'text'} value={field.value} on:input={(event) => updateCustomField(index, { value: (event.currentTarget as HTMLInputElement).value })} placeholder="Value" autocomplete="off" />
             <label class="flex items-center gap-2 text-xs"><input type="checkbox" checked={field.hidden} on:change={(event) => updateCustomField(index, { hidden: event.currentTarget.checked })} /> Hidden</label>
             <div class="flex gap-1">{#if detail}<Button variant="secondary" size="icon" type="button" on:click={() => copy(`custom:${index}`)} aria-label="Copy custom field"><Clipboard size={15} /></Button>{/if}<Button variant="ghost" size="icon" type="button" on:click={() => removeCustomField(index)} aria-label="Remove custom field"><X size={15} /></Button></div>
           </div>
