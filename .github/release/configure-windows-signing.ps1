@@ -7,11 +7,10 @@ $values = @(
 )
 $present = @($values | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
 if ($present -eq 0) {
-  Write-Host "Windows signing is not configured; the installer will be unsigned."
-  exit 0
+  throw "Windows production signing is required. Configure WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD, and WINDOWS_TIMESTAMP_URL before publishing a real-user release."
 }
 if ($present -ne $values.Count) {
-  throw "Configure all Windows signing secrets or none of them."
+  throw "Configure all Windows signing secrets: WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD, and WINDOWS_TIMESTAMP_URL."
 }
 
 $certificatePath = Join-Path $env:RUNNER_TEMP "windows-certificate.pfx"
@@ -28,11 +27,17 @@ if ($signingCertificates.Count -ne 1) {
   throw "Expected exactly one imported Windows certificate with a private key, found $($signingCertificates.Count)."
 }
 
+$now = Get-Date
+$certificate = $signingCertificates[0]
+if ($certificate.NotBefore -gt $now -or $certificate.NotAfter -lt $now) {
+  throw "The configured Windows code-signing certificate is not currently valid."
+}
+
 $config = Get-Content -Path $env:RELEASE_CONFIG -Raw | ConvertFrom-Json
 if ($null -eq $config.bundle.windows) {
   $config.bundle | Add-Member -NotePropertyName windows -NotePropertyValue ([pscustomobject]@{})
 }
-$config.bundle.windows | Add-Member -Force -NotePropertyName certificateThumbprint -NotePropertyValue $signingCertificates[0].Thumbprint
+$config.bundle.windows | Add-Member -Force -NotePropertyName certificateThumbprint -NotePropertyValue $certificate.Thumbprint
 $config.bundle.windows | Add-Member -Force -NotePropertyName digestAlgorithm -NotePropertyValue "sha256"
 $config.bundle.windows | Add-Member -Force -NotePropertyName timestampUrl -NotePropertyValue $env:WINDOWS_TIMESTAMP_URL
 $config | ConvertTo-Json -Depth 20 | Set-Content -Path $env:RELEASE_CONFIG -Encoding utf8NoBOM
