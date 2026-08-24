@@ -50,7 +50,7 @@ ND Secure is a local-first Tauri v2 application that combines an encrypted media
 - Credential search is performed only while unlocked after Rust-side record decryption; sensitive metadata is not stored as a plaintext search index.
 - Rust-generated passwords using operating-system entropy, explicit character classes, ambiguous-character exclusion, and enforced minimum number/symbol counts.
 - Rust-side TOTP generation; the TOTP seed is not returned for ordinary code display.
-- Native clipboard copy command with configurable conditional clearing. ND Secure clears only when the clipboard still contains the exact value it copied.
+- Native clipboard copy command with configurable conditional clearing. ND Secure tracks only a digest/generation for the copied value and conditionally clears that exact value on timeout and when the vault locks, closes, or enters a configured lifecycle lock.
 - Cursor pagination and encrypted SQLite payloads.
 
 ## Architecture
@@ -183,7 +183,7 @@ A recovery key is not a backup of the vault files. Keep encrypted backups of the
 
 ## Release automation
 
-Pushes to `main` run a release pipeline that first performs the same locked frontend/Rust validation used by CI, then builds the supported signed artifacts when platform signing credentials are configured. Release assets include SHA-256 checksums. Windows and macOS production distribution still depends on valid code-signing/notarization secrets; Android release artifacts are omitted when its signing secret group is not configured.
+Pushes to `main` run a release pipeline that first performs the same locked frontend/Rust validation used by CI, then builds Windows x64, Apple Silicon macOS, and Android ARM64 production artifacts. Publishing fails closed unless all three platform signing configurations are complete: a valid Windows code-signing certificate and timestamp service, an Apple Developer ID Application identity plus notarization credentials, and the Android release keystore group. Release assets include SHA-256 checksums.
 
 ## Important limitations
 
