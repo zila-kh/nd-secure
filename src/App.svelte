@@ -13,7 +13,12 @@
     initialized: false,
     locked: true,
     autoLockSeconds: 300,
-    deleteSourceAfterImport: false
+    deleteSourceAfterImport: false,
+    lockOnBlur: false,
+    lockOnSuspend: true,
+    clipboardTimeoutSeconds: 30,
+    recoveryConfigured: false,
+    recentlyReauthenticated: false
   };
   let view: VaultView = 'gallery';
   let loading = true;
@@ -52,6 +57,18 @@
     }
   }
 
+  async function recoverVault(recoveryKey: string, newPassword: string) {
+    busy = true;
+    error = '';
+    try {
+      status = await vaultApi.recover(recoveryKey, newPassword);
+    } catch (cause) {
+      error = String(cause);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function lock() {
     try {
       status = await vaultApi.lock();
@@ -62,13 +79,18 @@
   }
 
   function visibilityChanged() {
-    if (document.visibilityState === 'hidden' && /Android/i.test(navigator.userAgent) && !status.locked) {
+    if (
+      document.visibilityState === 'hidden'
+      && /Android/i.test(navigator.userAgent)
+      && status.lockOnSuspend
+      && !status.locked
+    ) {
       void lock();
     }
   }
 
   onMount(() => {
-    refreshStatus();
+    void refreshStatus();
     statusTimer = setInterval(refreshStatus, 5000);
     document.addEventListener('visibilitychange', visibilityChanged);
   });
@@ -84,7 +106,14 @@
     <div class="flex items-center gap-3 text-muted-foreground"><LoaderCircle class="animate-spin" /> Loading encrypted vault…</div>
   </main>
 {:else if status.locked}
-  <UnlockScreen {busy} {error} initialized={status.initialized} onSubmit={submitPassword} />
+  <UnlockScreen
+    {busy}
+    {error}
+    initialized={status.initialized}
+    recoveryConfigured={status.recoveryConfigured}
+    onSubmit={submitPassword}
+    onRecover={recoverVault}
+  />
 {:else}
   <div class="flex h-screen min-h-0 overflow-hidden">
     <aside class="hidden w-64 shrink-0 flex-col border-r border-border bg-card/90 p-4 backdrop-blur md:flex">
