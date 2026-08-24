@@ -11,8 +11,8 @@ use zeroize::Zeroizing;
 use crate::{
     credentials::{
         generate_password as create_password, generate_password_with_options, generate_totp,
-        CredentialDetail, CredentialInput, CredentialPage, GeneratedPassword, PasswordGeneratorOptions,
-        TotpCode,
+        CredentialDetail, CredentialInput, CredentialPage, GeneratedPassword,
+        PasswordGeneratorOptions, TotpCode,
     },
     crypto::{CREDENTIALS_DOMAIN, GALLERY_DOMAIN},
     error::{Result, VaultError},
