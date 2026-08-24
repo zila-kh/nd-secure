@@ -309,18 +309,18 @@ pub async fn save_credential(
 
 #[tauri::command]
 pub async fn delete_credential(state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    state.session.touch().map_err(public_error)?;
     let id = canonical_uuid(&id).map_err(public_error)?;
+    let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
     let repository = Arc::clone(&state.credentials);
-    blocking(move || repository.delete(id)).await
+    blocking(move || repository.delete(&key, id)).await
 }
 
 #[tauri::command]
 pub async fn restore_credential(state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    state.session.touch().map_err(public_error)?;
     let id = canonical_uuid(&id).map_err(public_error)?;
+    let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
     let repository = Arc::clone(&state.credentials);
-    blocking(move || repository.restore(id)).await
+    blocking(move || repository.restore(&key, id)).await
 }
 
 #[tauri::command]
