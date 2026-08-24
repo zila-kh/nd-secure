@@ -198,13 +198,21 @@ pub async fn credential_page(
     cursor: Option<String>,
     limit: u32,
     search: String,
+    project: Option<String>,
+    environment: Option<String>,
 ) -> CommandResult<CredentialPage> {
-    if search.len() > 4096 {
-        return Err("credential search text is too long".into());
+    if search.len() > 4096
+        || project.as_ref().map(String::len).unwrap_or(0) > 256
+        || environment.as_ref().map(String::len).unwrap_or(0) > 64
+    {
+        return Err("credential filter text is too long".into());
     }
     let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
     let repository = Arc::clone(&state.credentials);
-    blocking(move || repository.page(&key, cursor.as_deref(), limit, &search)).await
+    blocking(move || {
+        repository.page(&key, cursor.as_deref(), limit, &search, project.as_deref(), environment.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
