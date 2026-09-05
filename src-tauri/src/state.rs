@@ -7,7 +7,7 @@ use parking_lot::Mutex;
 
 use crate::{
     credentials::CredentialRepository, gallery::GalleryRepository, media_server::MediaServer,
-    session::SessionState,
+    projects::ProjectRepository, session::SessionState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +59,7 @@ pub struct AppState {
     pub session: Arc<SessionState>,
     pub gallery: Arc<GalleryRepository>,
     pub credentials: Arc<CredentialRepository>,
+    pub projects: Arc<ProjectRepository>,
     pub media_server: Arc<MediaServer>,
     pub clipboard: Arc<ClipboardTracker>,
     protocol_active: Arc<AtomicUsize>,
@@ -70,12 +71,14 @@ impl AppState {
         session: Arc<SessionState>,
         gallery: Arc<GalleryRepository>,
         credentials: Arc<CredentialRepository>,
+        projects: Arc<ProjectRepository>,
         media_server: Arc<MediaServer>,
     ) -> Self {
         Self {
             session,
             gallery,
             credentials,
+            projects,
             media_server,
             clipboard: Arc::new(ClipboardTracker::new()),
             protocol_active: Arc::new(AtomicUsize::new(0)),
