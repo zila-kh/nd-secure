@@ -7,6 +7,7 @@ use crate::error::{Result, VaultError};
 
 pub const GALLERY_DOMAIN: &[u8] = b"nd-secure/gallery-root/v1";
 pub const CREDENTIALS_DOMAIN: &[u8] = b"nd-secure/credentials-root/v1";
+pub const PROJECTS_DOMAIN: &[u8] = b"nd-secure/projects-root/v1";
 
 pub fn random_array<const N: usize>() -> [u8; N] {
     let mut output = [0_u8; N];
