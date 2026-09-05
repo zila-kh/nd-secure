@@ -1,0 +1,240 @@
+name: PR 11 integration
+
+on:
+  push:
+    branches: ["feature/secure-project-env-runtime"]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: feature/secure-project-env-runtime
+          fetch-depth: 0
+      - name: Install formatter
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+      - name: Merge hardened main and preserve project runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          merge_status=$?
+          set -e
+          if [ "$merge_status" -ne 0 ]; then
+            unexpected="$(git diff --name-only --diff-filter=U | grep -Ev '^(src-tauri/src/lib.rs|src-tauri/src/state.rs|src/App.svelte|src/lib/api.ts|src/lib/types.ts)$' || true)"
+            if [ -n "$unexpected" ]; then
+              echo "Unexpected merge conflicts:" >&2
+              echo "$unexpected" >&2
+              exit 1
+            fi
+          fi
+
+          # Start all shared integration surfaces from hardened main, then layer Projects on top.
+          git checkout origin/main -- src-tauri/src/lib.rs src-tauri/src/state.rs src/App.svelte src/lib/api.ts src/lib/types.ts
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str, label: str):
+              text = path.read_text()
+              if new in text:
+                  return
+              if old not in text:
+                  raise SystemExit(f'{path}: missing anchor for {label}')
+              path.write_text(text.replace(old, new, 1))
+
+          # Rust bootstrap: retain activity/health/trash hardening and add project runtime.
+          lib = Path('src-tauri/src/lib.rs')
+          replace_once(lib, 'mod paths;\n', 'mod paths;\nmod project_commands;\nmod projects;\n', 'project modules')
+          replace_once(
+              lib,
+              '    paths::VaultPaths,\n    session::SessionState,\n',
+              '    paths::VaultPaths,\n    projects::ProjectRepository,\n    session::SessionState,\n',
+              'ProjectRepository import',
+          )
+          replace_once(
+              lib,
+              '            let credentials = Arc::new(CredentialRepository::new(paths.credentials_db.clone())?);\n            let media_server =',
+              '            let credentials = Arc::new(CredentialRepository::new(paths.credentials_db.clone())?);\n            let projects = Arc::new(ProjectRepository::new(paths.projects_db.clone())?);\n            let media_server =',
+              'project repository setup',
+          )
+          replace_once(
+              lib,
+              '                credentials,\n                media_server,\n',
+              '                credentials,\n                projects,\n                media_server,\n',
+              'AppState projects argument',
+          )
+          replace_once(
+              lib,
+              '            commands::credential_totp,\n',
+              '            commands::credential_totp,\n            project_commands::inspect_project,\n            project_commands::project_list,\n            project_commands::register_project,\n            project_commands::sync_project,\n            project_commands::delete_project,\n            project_commands::project_environment_status,\n            project_commands::import_project_env,\n            project_commands::run_project_command,\n',
+              'project command registration',
+          )
+
+          # App state: keep paths + GalleryTrash and add ProjectRepository.
+          state = Path('src-tauri/src/state.rs')
+          replace_once(
+              state,
+              '    paths::VaultPaths,\n    session::SessionState,\n',
+              '    paths::VaultPaths,\n    projects::ProjectRepository,\n    session::SessionState,\n',
+              'state ProjectRepository import',
+          )
+          replace_once(
+              state,
+              '    pub credentials: Arc<CredentialRepository>,\n    pub media_server: Arc<MediaServer>,\n',
+              '    pub credentials: Arc<CredentialRepository>,\n    pub projects: Arc<ProjectRepository>,\n    pub media_server: Arc<MediaServer>,\n',
+              'state projects field',
+          )
+          replace_once(
+              state,
+              '        credentials: Arc<CredentialRepository>,\n        media_server: Arc<MediaServer>,\n',
+              '        credentials: Arc<CredentialRepository>,\n        projects: Arc<ProjectRepository>,\n        media_server: Arc<MediaServer>,\n',
+              'state constructor projects argument',
+          )
+          replace_once(
+              state,
+              '            credentials,\n            media_server,\n',
+              '            credentials,\n            projects,\n            media_server,\n',
+              'state constructor projects assignment',
+          )
+
+          # Frontend shell: preserve race-safe status/activity handling and add Projects navigation.
+          app = Path('src/App.svelte')
+          text = app.read_text()
+          text = text.replace(
+              "  import { Images, KeyRound, LoaderCircle, Lock, Settings, ShieldCheck } from 'lucide-svelte';",
+              "  import { FolderOpen, Images, KeyRound, LoaderCircle, Lock, Settings, ShieldCheck } from 'lucide-svelte';",
+              1,
+          )
+          if "import ProjectView from './lib/components/ProjectView.svelte';" not in text:
+              anchor = "  import PasswordView from './lib/components/PasswordView.svelte';\n"
+              if anchor not in text:
+                  raise SystemExit('App.svelte ProjectView import anchor missing')
+              text = text.replace(anchor, anchor + "  import ProjectView from './lib/components/ProjectView.svelte';\n", 1)
+          if "{ id: 'projects' as const" not in text:
+              anchor = "    { id: 'passwords' as const, label: 'Passwords', icon: KeyRound },\n"
+              if anchor not in text:
+                  raise SystemExit('App.svelte navigation anchor missing')
+              text = text.replace(anchor, anchor + "    { id: 'projects' as const, label: 'Projects', icon: FolderOpen },\n", 1)
+          if "{:else if view === 'projects'}" not in text:
+              anchor = "      {:else if view === 'passwords'}\n        <PasswordView />\n"
+              if anchor not in text:
+                  raise SystemExit('App.svelte view anchor missing')
+              text = text.replace(anchor, anchor + "      {:else if view === 'projects'}\n        <ProjectView />\n", 1)
+          app.write_text(text)
+
+          # API: keep health/trash/activity APIs and append project operations.
+          api = Path('src/lib/api.ts')
+          text = api.read_text()
+          type_anchor = '  PasswordGeneratorOptions,\n'
+          project_types = (
+              '  ProjectCommandResult,\n'
+              '  ProjectEnvImportResult,\n'
+              '  ProjectEnvironmentStatus,\n'
+              '  ProjectInspection,\n'
+              '  ProjectRegistration,\n'
+          )
+          if '  ProjectRegistration,\n' not in text:
+              if type_anchor not in text:
+                  raise SystemExit('api.ts project type import anchor missing')
+              text = text.replace(type_anchor, type_anchor + project_types, 1)
+          if 'inspectProject:' not in text:
+              anchor = "  totpCode: (id: string) => invoke<TotpCode>('credential_totp', { id })\n"
+              if anchor not in text:
+                  raise SystemExit('api.ts TOTP anchor missing')
+              project_api = """  totpCode: (id: string) => invoke<TotpCode>('credential_totp', { id }),
+
+  inspectProject: (root: string) => invoke<ProjectInspection>('inspect_project', { root }),
+  projectList: () => invoke<ProjectRegistration[]>('project_list'),
+  registerProject: (root: string, name: string, environments: string[]) =>
+    invoke<ProjectRegistration>('register_project', { root, name, environments }),
+  syncProject: (id: string) => invoke<ProjectRegistration>('sync_project', { id }),
+  deleteProject: (id: string) => invoke<void>('delete_project', { id }),
+  projectEnvironmentStatus: (id: string, environment: string) =>
+    invoke<ProjectEnvironmentStatus>('project_environment_status', { id, environment }),
+  importProjectEnv: (id: string, environment: string, fileName: string) =>
+    invoke<ProjectEnvImportResult>('import_project_env', { id, environment, fileName }),
+  runProjectCommand: (id: string, environment: string, program: string, args: string[]) =>
+    invoke<ProjectCommandResult>('run_project_command', { id, environment, program, args })
+"""
+              text = text.replace(anchor, project_api, 1)
+          api.write_text(text)
+
+          # Shared types: retain health/gallery-trash types and append Projects types.
+          types = Path('src/lib/types.ts')
+          text = types.read_text()
+          text = text.replace(
+              "export type VaultView = 'gallery' | 'passwords' | 'settings';",
+              "export type VaultView = 'gallery' | 'passwords' | 'projects' | 'settings';",
+              1,
+          )
+          if 'export interface ProjectRegistration' not in text:
+              text = text.rstrip() + """
+
+export interface ProjectRegistration {
+  id: string;
+  name: string;
+  root: string;
+  environments: string[];
+  requiredKeys: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProjectInspection {
+  root: string;
+  suggestedName: string;
+  exampleExists: boolean;
+  requiredKeys: string[];
+  plaintextEnvFiles: string[];
+}
+
+export interface ProjectEnvironmentStatus {
+  projectId: string;
+  environment: string;
+  presentKeys: string[];
+  missingKeys: string[];
+  plaintextEnvFiles: string[];
+}
+
+export interface ProjectEnvImportResult {
+  importedKeys: string[];
+  existingKeys: string[];
+  sourceRemoved: boolean;
+  rotationRecommended: boolean;
+}
+
+export interface ProjectCommandResult {
+  pid: number;
+  injectedKeys: string[];
+}
+"""
+          types.write_text(text)
+          PY
+
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all
+          cargo fmt --manifest-path plugins/tauri-plugin-vault-source/Cargo.toml --all
+          rm .github/workflows/pr11-integrate.yml
+          git add -A
+          unresolved="$(git diff --name-only --diff-filter=U || true)"
+          if [ -n "$unresolved" ]; then
+            echo "Unresolved merge conflicts:" >&2
+            echo "$unresolved" >&2
+            exit 1
+          fi
+          git commit -m "merge: integrate hardened main into PR 11"
+          git push origin HEAD:feature/secure-project-env-runtime
