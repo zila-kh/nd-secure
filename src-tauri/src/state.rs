@@ -9,6 +9,7 @@ use crate::{
     credentials::CredentialRepository,
     gallery::{GalleryRepository, GalleryTrash},
     media_server::MediaServer,
+    paths::VaultPaths,
     session::SessionState,
 };
 
@@ -58,6 +59,7 @@ impl ClipboardTracker {
 
 #[derive(Clone)]
 pub struct AppState {
+    pub paths: VaultPaths,
     pub session: Arc<SessionState>,
     pub gallery: Arc<GalleryRepository>,
     pub gallery_trash: Arc<GalleryTrash>,
@@ -70,6 +72,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(
+        paths: VaultPaths,
         session: Arc<SessionState>,
         gallery: Arc<GalleryRepository>,
         gallery_trash: Arc<GalleryTrash>,
@@ -77,6 +80,7 @@ impl AppState {
         media_server: Arc<MediaServer>,
     ) -> Self {
         Self {
+            paths,
             session,
             gallery,
             gallery_trash,
