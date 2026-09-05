@@ -31,6 +31,7 @@ const THUMBNAIL_READY: i64 = 1;
 const THUMBNAIL_UNAVAILABLE: i64 = 2;
 const TRASH_AAD_DOMAIN: &[u8] = b"nd-secure/gallery-trash/v1";
 const MAX_TRASH_PAGE: u32 = 500;
+const TRASH_VARIANTS: [&str; 4] = ["trash", "trashing", "restoring", "purging"];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,13 +92,23 @@ pub struct GalleryTrash {
 
 impl GalleryTrash {
     pub fn new(db_path: PathBuf, objects_dir: PathBuf, thumbnails_dir: PathBuf) -> Result<Self> {
-        let trash = Self { db_path, objects_dir, thumbnails_dir, operation: Mutex::new(()) };
+        let trash = Self {
+            db_path,
+            objects_dir,
+            thumbnails_dir,
+            operation: Mutex::new(()),
+        };
         trash.initialize_schema()?;
         trash.recover()?;
         Ok(trash)
     }
 
-    pub fn page(&self, root_key: &[u8; 32], cursor: Option<&str>, limit: u32) -> Result<GalleryTrashPage> {
+    pub fn page(
+        &self,
+        root_key: &[u8; 32],
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<GalleryTrashPage> {
         let limit = limit.clamp(1, MAX_TRASH_PAGE) as usize;
         let requested = limit.saturating_add(1);
         let cursor = cursor.map(decode_cursor).transpose()?;
@@ -147,7 +158,12 @@ impl GalleryTrash {
         let next_cursor = if has_more {
             items
                 .last()
-                .map(|item| encode_cursor(&TrashCursor { deleted_at: item.deleted_at, id: item.id.clone() }))
+                .map(|item| {
+                    encode_cursor(&TrashCursor {
+                        deleted_at: item.deleted_at,
+                        id: item.id.clone(),
+                    })
+                })
                 .transpose()?
         } else {
             None
@@ -191,10 +207,18 @@ impl GalleryTrash {
             let inserted = connection.execute(
                 "INSERT INTO media_trash (id, nonce, ciphertext, deleted_at, format_version)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![id.to_string(), nonce.as_slice(), ciphertext, deleted_at, TRASH_SCHEMA_VERSION,],
+                params![
+                    id.to_string(),
+                    nonce.as_slice(),
+                    ciphertext,
+                    deleted_at,
+                    TRASH_SCHEMA_VERSION,
+                ],
             )?;
             if inserted != 1 {
-                return Err(VaultError::Database("unable to journal gallery trash operation".into()));
+                return Err(VaultError::Database(
+                    "unable to journal gallery trash operation".into(),
+                ));
             }
         }
 
@@ -215,8 +239,10 @@ impl GalleryTrash {
         let database_result = (|| -> Result<()> {
             let mut connection = self.connection()?;
             let transaction = connection.transaction()?;
-            let deleted =
-                transaction.execute("DELETE FROM media_items WHERE id = ?1", params![id.to_string()])?;
+            let deleted = transaction.execute(
+                "DELETE FROM media_items WHERE id = ?1",
+                params![id.to_string()],
+            )?;
             if deleted != 1 {
                 return Err(VaultError::NotFound);
             }
@@ -247,7 +273,9 @@ impl GalleryTrash {
         validate_metadata(&metadata, id)?;
 
         if self.active_row_exists(id)? {
-            return Err(VaultError::InvalidInput("media item is already active".into()));
+            return Err(VaultError::InvalidInput(
+                "media item is already active".into(),
+            ));
         }
         let active_object = self.objects_dir.join(format!("{id}.enc"));
         ensure_absent(&active_object)?;
@@ -258,18 +286,22 @@ impl GalleryTrash {
             fs::rename(&object_source, &object_restoring)?;
         }
 
-        let thumbnail = metadata.thumbnail.as_ref().and_then(|thumbnail| {
-            find_trash_source(&self.thumbnails_dir, id)
-                .ok()
-                .flatten()
-                .map(|source| (thumbnail.clone(), source))
-        });
+        let thumbnail = if let Some(thumbnail) = metadata.thumbnail.as_ref() {
+            let source = find_trash_source(&self.thumbnails_dir, id)?
+                .ok_or(VaultError::AuthenticationFailed)?;
+            Some((thumbnail.clone(), source))
+        } else {
+            None
+        };
         let thumbnail_restoring = self.thumbnails_dir.join(format!("{id}.restoring"));
         if let Some((_, source)) = thumbnail.as_ref() {
             if source != &thumbnail_restoring {
                 ensure_absent(&thumbnail_restoring)?;
                 if let Err(error) = fs::rename(source, &thumbnail_restoring) {
-                    let _ = fs::rename(&object_restoring, self.objects_dir.join(format!("{id}.trash")));
+                    let _ = fs::rename(
+                        &object_restoring,
+                        self.objects_dir.join(format!("{id}.trash")),
+                    );
                     return Err(error.into());
                 }
             }
@@ -301,7 +333,10 @@ impl GalleryTrash {
                     metadata.container_version,
                     metadata.width.map(i64::from),
                     metadata.height.map(i64::from),
-                    metadata.duration_ms.map(|value| sqlite_integer(value, "media duration")).transpose()?,
+                    metadata
+                        .duration_ms
+                        .map(|value| sqlite_integer(value, "media duration"))
+                        .transpose()?,
                     thumbnail_state,
                 ],
             )?;
@@ -323,9 +358,15 @@ impl GalleryTrash {
             Ok(())
         })();
         if let Err(error) = database_result {
-            let _ = fs::rename(&object_restoring, self.objects_dir.join(format!("{id}.trash")));
+            let _ = fs::rename(
+                &object_restoring,
+                self.objects_dir.join(format!("{id}.trash")),
+            );
             if restore_thumbnail {
-                let _ = fs::rename(&thumbnail_restoring, self.thumbnails_dir.join(format!("{id}.trash")));
+                let _ = fs::rename(
+                    &thumbnail_restoring,
+                    self.thumbnails_dir.join(format!("{id}.trash")),
+                );
             }
             return Err(error);
         }
@@ -341,16 +382,31 @@ impl GalleryTrash {
         })();
         if let Err(error) = file_result {
             let connection = self.connection()?;
-            let _ = connection.execute("DELETE FROM media_items WHERE id = ?1", params![id.to_string()]);
+            let _ = connection.execute(
+                "DELETE FROM media_items WHERE id = ?1",
+                params![id.to_string()],
+            );
             if active_object.is_file() {
-                let _ = fs::rename(&active_object, self.objects_dir.join(format!("{id}.trash")));
+                let _ = fs::rename(
+                    &active_object,
+                    self.objects_dir.join(format!("{id}.trash")),
+                );
             } else if object_restoring.is_file() {
-                let _ = fs::rename(&object_restoring, self.objects_dir.join(format!("{id}.trash")));
+                let _ = fs::rename(
+                    &object_restoring,
+                    self.objects_dir.join(format!("{id}.trash")),
+                );
             }
             if active_thumbnail.is_file() {
-                let _ = fs::rename(&active_thumbnail, self.thumbnails_dir.join(format!("{id}.trash")));
+                let _ = fs::rename(
+                    &active_thumbnail,
+                    self.thumbnails_dir.join(format!("{id}.trash")),
+                );
             } else if thumbnail_restoring.is_file() {
-                let _ = fs::rename(&thumbnail_restoring, self.thumbnails_dir.join(format!("{id}.trash")));
+                let _ = fs::rename(
+                    &thumbnail_restoring,
+                    self.thumbnails_dir.join(format!("{id}.trash")),
+                );
             }
             return Err(error);
         }
@@ -373,7 +429,11 @@ impl GalleryTrash {
         let ids = rows
             .map(|row| {
                 let value = row?;
-                Uuid::parse_str(&value).map_err(|_| rusqlite::Error::InvalidQuery)
+                let id = Uuid::parse_str(&value).map_err(|_| rusqlite::Error::InvalidQuery)?;
+                if id.to_string() != value {
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
+                Ok(id)
             })
             .collect::<std::result::Result<Vec<_>, _>>()?;
         drop(statement);
@@ -401,17 +461,17 @@ impl GalleryTrash {
         let mut verified_bytes = metadata.file_size_bytes;
 
         if let Some(thumbnail) = metadata.thumbnail.as_ref() {
-            if let Some(thumbnail_path) = find_trash_source(&self.thumbnails_dir, id)? {
-                let thumbnail_id = thumbnail_container_id(id);
-                let mut object = ContainerReader::open(root_key, thumbnail_id, &thumbnail_path)?;
-                object.verify_all()?;
-                if object.metadata().mime_type != THUMBNAIL_MIME
-                    || object.metadata().total_size != thumbnail.file_size_bytes
-                {
-                    return Err(VaultError::AuthenticationFailed);
-                }
-                verified_bytes = verified_bytes.saturating_add(thumbnail.file_size_bytes);
+            let thumbnail_path = find_trash_source(&self.thumbnails_dir, id)?
+                .ok_or(VaultError::AuthenticationFailed)?;
+            let thumbnail_id = thumbnail_container_id(id);
+            let mut object = ContainerReader::open(root_key, thumbnail_id, &thumbnail_path)?;
+            object.verify_all()?;
+            if object.metadata().mime_type != THUMBNAIL_MIME
+                || object.metadata().total_size != thumbnail.file_size_bytes
+            {
+                return Err(VaultError::AuthenticationFailed);
             }
+            verified_bytes = verified_bytes.saturating_add(thumbnail.file_size_bytes);
         }
         Ok(verified_bytes)
     }
@@ -420,13 +480,36 @@ impl GalleryTrash {
         if self.active_row_exists(id)? {
             return Err(VaultError::AuthenticationFailed);
         }
-        let connection = self.connection()?;
-        let deleted = connection.execute("DELETE FROM media_trash WHERE id = ?1", params![id.to_string()])?;
-        if deleted != 1 {
+        if !self.trash_row_exists(id)? {
             return Err(VaultError::NotFound);
         }
-        remove_trash_variants(&self.objects_dir, id);
-        remove_trash_variants(&self.thumbnails_dir, id);
+
+        let object_purging = stage_for_purge(&self.objects_dir, id)?.ok_or(VaultError::NotFound)?;
+        let thumbnail_purging = stage_for_purge(&self.thumbnails_dir, id)?;
+
+        let delete_result = (|| -> Result<()> {
+            let connection = self.connection()?;
+            let deleted = connection.execute(
+                "DELETE FROM media_trash WHERE id = ?1",
+                params![id.to_string()],
+            )?;
+            if deleted != 1 {
+                return Err(VaultError::NotFound);
+            }
+            Ok(())
+        })();
+        if let Err(error) = delete_result {
+            let _ = rollback_purge_stage(&object_purging);
+            if let Some(path) = thumbnail_purging.as_ref() {
+                let _ = rollback_purge_stage(path);
+            }
+            return Err(error);
+        }
+
+        fs::remove_file(&object_purging)?;
+        if let Some(path) = thumbnail_purging {
+            fs::remove_file(path)?;
+        }
         Ok(())
     }
 
@@ -446,8 +529,12 @@ impl GalleryTrash {
                     let thumbnail_mime: Option<String> = row.get(11)?;
                     let thumbnail_size: Option<u64> = row.get(12)?;
                     let thumbnail_version: Option<i64> = row.get(13)?;
-                    let thumbnail = match (thumbnail_name, thumbnail_mime, thumbnail_size, thumbnail_version)
-                    {
+                    let thumbnail = match (
+                        thumbnail_name,
+                        thumbnail_mime,
+                        thumbnail_size,
+                        thumbnail_version,
+                    ) {
                         (
                             Some(masked_name),
                             Some(mime_type),
@@ -487,14 +574,23 @@ impl GalleryTrash {
             .query_row(
                 "SELECT nonce, ciphertext, format_version FROM media_trash WHERE id = ?1",
                 params![id.to_string()],
-                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, i64>(2)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, Vec<u8>>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
             )
             .optional()?
             .ok_or(VaultError::NotFound)?;
         if row.2 != TRASH_SCHEMA_VERSION {
             return Err(VaultError::AuthenticationFailed);
         }
-        let nonce: [u8; 12] = row.0.try_into().map_err(|_| VaultError::AuthenticationFailed)?;
+        let nonce: [u8; 12] = row
+            .0
+            .try_into()
+            .map_err(|_| VaultError::AuthenticationFailed)?;
         decrypt_metadata(root_key, &id.to_string(), &nonce, &row.1)
     }
 
@@ -508,9 +604,22 @@ impl GalleryTrash {
         Ok(exists != 0)
     }
 
+    fn trash_row_exists(&self, id: Uuid) -> Result<bool> {
+        let connection = self.connection()?;
+        let exists: i64 = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM media_trash WHERE id = ?1)",
+            params![id.to_string()],
+            |row| row.get(0),
+        )?;
+        Ok(exists != 0)
+    }
+
     fn remove_trash_row(&self, id: Uuid) -> Result<()> {
         let connection = self.connection()?;
-        connection.execute("DELETE FROM media_trash WHERE id = ?1", params![id.to_string()])?;
+        connection.execute(
+            "DELETE FROM media_trash WHERE id = ?1",
+            params![id.to_string()],
+        )?;
         Ok(())
     }
 
@@ -537,39 +646,32 @@ impl GalleryTrash {
         let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
         let mut trash_ids = HashSet::new();
         for row in rows {
-            let id = row?;
-            if canonical_uuid(&id).is_some() {
-                trash_ids.insert(id);
-            } else {
-                connection.execute("DELETE FROM media_trash WHERE id = ?1", params![id])?;
-            }
+            trash_ids.insert(row?);
         }
         drop(statement);
 
         let active_ids = collect_ids(&connection, "SELECT id FROM media_items")?;
         let mut completed_restores = Vec::new();
-        let mut missing_primary = Vec::new();
         for id in trash_ids.iter() {
-            let parsed = Uuid::parse_str(id).map_err(|_| VaultError::AuthenticationFailed)?;
+            let Some(parsed) = canonical_uuid(id) else {
+                continue;
+            };
             let active_path = self.objects_dir.join(format!("{id}.enc"));
             if active_ids.contains(id) && active_path.is_file() {
                 completed_restores.push(id.clone());
                 continue;
             }
-            if normalize_trash_variant(&self.objects_dir, parsed)?.is_none() {
-                missing_primary.push(id.clone());
-                continue;
-            }
+            let _ = normalize_trash_variant(&self.objects_dir, parsed)?;
             let _ = normalize_trash_variant(&self.thumbnails_dir, parsed)?;
         }
-        for id in completed_restores.iter().chain(missing_primary.iter()) {
+        for id in completed_restores {
             connection.execute("DELETE FROM media_trash WHERE id = ?1", params![id])?;
-            trash_ids.remove(id);
+            trash_ids.remove(&id);
         }
         drop(connection);
 
-        cleanup_orphan_trash_variants(&self.objects_dir, &trash_ids)?;
-        cleanup_orphan_trash_variants(&self.thumbnails_dir, &trash_ids)?;
+        cleanup_completed_purges(&self.objects_dir, &trash_ids)?;
+        cleanup_completed_purges(&self.thumbnails_dir, &trash_ids)?;
         Ok(())
     }
 
@@ -595,7 +697,9 @@ fn map_encrypted_trash_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Encrypte
     let nonce: Vec<u8> = row.get(1)?;
     Ok(EncryptedTrashRow {
         id: row.get(0)?,
-        nonce: nonce.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?,
+        nonce: nonce
+            .try_into()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
         ciphertext: row.get(2)?,
         deleted_at: row.get(3)?,
         format_version: row.get(4)?,
@@ -618,12 +722,22 @@ fn trash_item(metadata: TrashMetadata, deleted_at: i64) -> Result<GalleryTrashIt
     })
 }
 
-fn encrypt_metadata(root_key: &[u8; 32], id: Uuid, metadata: &TrashMetadata) -> Result<([u8; 12], Vec<u8>)> {
+fn encrypt_metadata(
+    root_key: &[u8; 32],
+    id: Uuid,
+    metadata: &TrashMetadata,
+) -> Result<([u8; 12], Vec<u8>)> {
     let nonce = random_array::<12>();
     let plaintext = Zeroizing::new(serde_json::to_vec(metadata)?);
     let cipher = Aes256Gcm::new_from_slice(root_key).map_err(|_| VaultError::Crypto)?;
     let ciphertext = cipher
-        .encrypt(Nonce::from_slice(&nonce), Payload { msg: plaintext.as_slice(), aad: &trash_aad(id) })
+        .encrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext.as_slice(),
+                aad: &trash_aad(id),
+            },
+        )
         .map_err(|_| VaultError::Crypto)?;
     Ok((nonce, ciphertext))
 }
@@ -640,7 +754,13 @@ fn decrypt_metadata(
     }
     let cipher = Aes256Gcm::new_from_slice(root_key).map_err(|_| VaultError::Crypto)?;
     let plaintext = cipher
-        .decrypt(Nonce::from_slice(nonce), Payload { msg: ciphertext, aad: &trash_aad(parsed) })
+        .decrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: ciphertext,
+                aad: &trash_aad(parsed),
+            },
+        )
         .map_err(|_| VaultError::AuthenticationFailed)?;
     let plaintext = Zeroizing::new(plaintext);
     serde_json::from_slice(plaintext.as_slice()).map_err(|_| VaultError::AuthenticationFailed)
@@ -658,9 +778,18 @@ fn validate_metadata(metadata: &TrashMetadata, id: Uuid) -> Result<()> {
         || metadata.masked_name != format!("{id}.enc")
         || metadata.container_version != CONTAINER_VERSION
         || metadata.file_size_bytes == 0
-        || !matches!(metadata.mime_type.as_str(), "image/jpeg" | "image/png" | "video/mp4" | "video/webm")
-        || !matches!(metadata.thumbnail_state, THUMBNAIL_PENDING | THUMBNAIL_READY | THUMBNAIL_UNAVAILABLE)
+        || !matches!(
+            metadata.mime_type.as_str(),
+            "image/jpeg" | "image/png" | "video/mp4" | "video/webm"
+        )
+        || !matches!(
+            metadata.thumbnail_state,
+            THUMBNAIL_PENDING | THUMBNAIL_READY | THUMBNAIL_UNAVAILABLE
+        )
     {
+        return Err(VaultError::AuthenticationFailed);
+    }
+    if (metadata.thumbnail_state == THUMBNAIL_READY) != metadata.thumbnail.is_some() {
         return Err(VaultError::AuthenticationFailed);
     }
     if let Some(thumbnail) = metadata.thumbnail.as_ref() {
@@ -683,49 +812,79 @@ fn ensure_absent(path: &Path) -> Result<()> {
 }
 
 fn find_trash_source(directory: &Path, id: Uuid) -> Result<Option<PathBuf>> {
-    for extension in ["trash", "trashing", "restoring"] {
-        let path = directory.join(format!("{id}.{extension}"));
-        if path.is_file() {
-            return Ok(Some(path));
-        }
-    }
-    Ok(None)
+    find_single_variant(directory, id, &TRASH_VARIANTS)
 }
 
 fn normalize_trash_variant(directory: &Path, id: Uuid) -> Result<Option<PathBuf>> {
+    let source = find_trash_source(directory, id)?;
+    let Some(source) = source else {
+        return Ok(None);
+    };
     let target = directory.join(format!("{id}.trash"));
-    if target.is_file() {
-        remove_file_if_present(&directory.join(format!("{id}.trashing")));
-        remove_file_if_present(&directory.join(format!("{id}.restoring")));
+    if source == target {
         return Ok(Some(target));
     }
-    for extension in ["trashing", "restoring"] {
-        let source = directory.join(format!("{id}.{extension}"));
-        if source.is_file() {
-            fs::rename(&source, &target)?;
-            return Ok(Some(target));
+    ensure_absent(&target)?;
+    fs::rename(source, &target)?;
+    Ok(Some(target))
+}
+
+fn stage_for_purge(directory: &Path, id: Uuid) -> Result<Option<PathBuf>> {
+    let source = find_trash_source(directory, id)?;
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    let target = directory.join(format!("{id}.purging"));
+    if source == target {
+        return Ok(Some(target));
+    }
+    ensure_absent(&target)?;
+    fs::rename(source, &target)?;
+    Ok(Some(target))
+}
+
+fn rollback_purge_stage(path: &Path) -> Result<()> {
+    if !path.is_file() {
+        return Ok(());
+    }
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or(VaultError::AuthenticationFailed)?;
+    let target = path.with_file_name(format!("{stem}.trash"));
+    ensure_absent(&target)?;
+    fs::rename(path, target)?;
+    Ok(())
+}
+
+fn find_single_variant(directory: &Path, id: Uuid, extensions: &[&str]) -> Result<Option<PathBuf>> {
+    let mut found = None;
+    for extension in extensions {
+        let path = directory.join(format!("{id}.{extension}"));
+        if !path.is_file() {
+            continue;
         }
+        if found.is_some() {
+            return Err(VaultError::AuthenticationFailed);
+        }
+        found = Some(path);
     }
-    Ok(None)
+    Ok(found)
 }
 
-fn remove_trash_variants(directory: &Path, id: Uuid) {
-    for extension in ["trash", "trashing", "restoring"] {
-        remove_file_if_present(&directory.join(format!("{id}.{extension}")));
-    }
-}
-
-fn cleanup_orphan_trash_variants(directory: &Path, expected_ids: &HashSet<String>) -> Result<()> {
+fn cleanup_completed_purges(directory: &Path, trash_ids: &HashSet<String>) -> Result<()> {
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
-        let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default();
-        if !matches!(extension, "trash" | "trashing" | "restoring") {
+        if path.extension().and_then(|value| value.to_str()) != Some("purging") {
             continue;
         }
-        let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or_default();
-        if !expected_ids.contains(stem) {
-            remove_file_if_present(&path);
+        let stem = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .ok_or(VaultError::AuthenticationFailed)?;
+        if !trash_ids.contains(stem) {
+            fs::remove_file(path)?;
         }
     }
     Ok(())
@@ -741,16 +900,10 @@ fn collect_ids(connection: &Connection, query: &str) -> Result<HashSet<String>> 
     Ok(ids)
 }
 
-fn remove_file_if_present(path: &Path) {
-    match fs::remove_file(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) => {}
-    }
-}
-
 fn canonical_uuid(value: &str) -> Option<Uuid> {
-    Uuid::parse_str(value).ok().filter(|parsed| parsed.to_string() == value)
+    Uuid::parse_str(value)
+        .ok()
+        .filter(|parsed| parsed.to_string() == value)
 }
 
 fn sqlite_integer(value: u64, label: &str) -> Result<i64> {
@@ -774,7 +927,8 @@ fn unix_timestamp() -> Result<i64> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| VaultError::Storage("system clock is before UNIX epoch".into()))?;
-    i64::try_from(duration.as_secs()).map_err(|_| VaultError::Storage("system clock overflow".into()))
+    i64::try_from(duration.as_secs())
+        .map_err(|_| VaultError::Storage("system clock overflow".into()))
 }
 
 #[cfg(test)]
@@ -812,11 +966,23 @@ mod tests {
         let key = [67_u8; 32];
         let id = import_png(&repository, &key);
 
-        assert!(matches!(trash.purge(id), Err(VaultError::AuthenticationFailed)));
+        assert!(matches!(
+            trash.purge(id),
+            Err(VaultError::AuthenticationFailed)
+        ));
         trash.delete(&key, id).unwrap();
         trash.purge(id).unwrap();
         assert!(trash.page(&key, None, 10).unwrap().items.is_empty());
-        assert!(!directory.path().join("objects").join(format!("{id}.trash")).exists());
+        assert!(!directory
+            .path()
+            .join("objects")
+            .join(format!("{id}.trash"))
+            .exists());
+        assert!(!directory
+            .path()
+            .join("objects")
+            .join(format!("{id}.purging"))
+            .exists());
     }
 
     #[test]
@@ -829,7 +995,10 @@ mod tests {
         trash.delete(&key, id).unwrap();
 
         let object_trash = directory.path().join("objects").join(format!("{id}.trash"));
-        let interrupted = directory.path().join("objects").join(format!("{id}.trashing"));
+        let interrupted = directory
+            .path()
+            .join("objects")
+            .join(format!("{id}.trashing"));
         fs::rename(&object_trash, &interrupted).unwrap();
         drop(trash);
 
@@ -838,14 +1007,118 @@ mod tests {
         assert_eq!(recovered.page(&key, None, 10).unwrap().items.len(), 1);
     }
 
+    #[test]
+    fn recovery_rolls_back_purge_before_journal_delete() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = test_repository(directory.path());
+        let trash = test_trash(directory.path());
+        let key = [73_u8; 32];
+        let id = import_png(&repository, &key);
+        trash.delete(&key, id).unwrap();
+
+        let object_trash = directory.path().join("objects").join(format!("{id}.trash"));
+        let purging = directory
+            .path()
+            .join("objects")
+            .join(format!("{id}.purging"));
+        fs::rename(&object_trash, &purging).unwrap();
+        drop(trash);
+
+        let recovered = test_trash(directory.path());
+        assert!(object_trash.is_file());
+        assert!(!purging.exists());
+        assert_eq!(recovered.page(&key, None, 10).unwrap().items.len(), 1);
+    }
+
+    #[test]
+    fn recovery_finishes_purge_after_journal_delete() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = test_repository(directory.path());
+        let trash = test_trash(directory.path());
+        let key = [79_u8; 32];
+        let id = import_png(&repository, &key);
+        trash.delete(&key, id).unwrap();
+
+        let object_trash = directory.path().join("objects").join(format!("{id}.trash"));
+        let purging = directory
+            .path()
+            .join("objects")
+            .join(format!("{id}.purging"));
+        fs::rename(&object_trash, &purging).unwrap();
+        let connection = Connection::open(directory.path().join("gallery.sqlite3")).unwrap();
+        connection
+            .execute(
+                "DELETE FROM media_trash WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .unwrap();
+        drop(connection);
+        drop(trash);
+
+        let recovered = test_trash(directory.path());
+        assert!(!purging.exists());
+        assert!(recovered.page(&key, None, 10).unwrap().items.is_empty());
+    }
+
+    #[test]
+    fn missing_primary_trash_file_does_not_erase_journal_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = test_repository(directory.path());
+        let trash = test_trash(directory.path());
+        let key = [83_u8; 32];
+        let id = import_png(&repository, &key);
+        trash.delete(&key, id).unwrap();
+
+        fs::remove_file(directory.path().join("objects").join(format!("{id}.trash"))).unwrap();
+        drop(trash);
+
+        let recovered = test_trash(directory.path());
+        let page = recovered.page(&key, None, 10).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, id.to_string());
+        assert!(matches!(
+            recovered.verify_item(&key, id),
+            Err(VaultError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn missing_expected_thumbnail_fails_integrity_verification() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = test_repository(directory.path());
+        let trash = test_trash(directory.path());
+        let key = [89_u8; 32];
+        let id = import_png(&repository, &key);
+        trash.delete(&key, id).unwrap();
+
+        let thumbnail = directory
+            .path()
+            .join("thumbnails")
+            .join(format!("{id}.trash"));
+        assert!(thumbnail.is_file());
+        fs::remove_file(thumbnail).unwrap();
+        assert!(matches!(
+            trash.verify_item(&key, id),
+            Err(VaultError::AuthenticationFailed)
+        ));
+    }
+
     fn test_repository(root: &Path) -> GalleryRepository {
-        GalleryRepository::new(root.join("gallery.sqlite3"), root.join("objects"), root.join("thumbnails"))
-            .unwrap()
+        GalleryRepository::new(
+            root.join("gallery.sqlite3"),
+            root.join("objects"),
+            root.join("thumbnails"),
+        )
+        .unwrap()
     }
 
     fn test_trash(root: &Path) -> GalleryTrash {
-        GalleryTrash::new(root.join("gallery.sqlite3"), root.join("objects"), root.join("thumbnails"))
-            .unwrap()
+        GalleryTrash::new(
+            root.join("gallery.sqlite3"),
+            root.join("objects"),
+            root.join("thumbnails"),
+        )
+        .unwrap()
     }
 
     fn import_png(repository: &GalleryRepository, key: &[u8; 32]) -> Uuid {
@@ -854,7 +1127,9 @@ mod tests {
         image.write_to(&mut encoded, ImageFormat::Png).unwrap();
         let bytes = encoded.into_inner();
         let mut source = Cursor::new(bytes.as_slice());
-        let id = repository.import_reader(key, &mut source, bytes.len() as u64).unwrap();
+        let id = repository
+            .import_reader(key, &mut source, bytes.len() as u64)
+            .unwrap();
         Uuid::parse_str(&id).unwrap()
     }
 }
