@@ -1,0 +1,136 @@
+name: PR 10 integration
+
+on:
+  push:
+    branches: ["agent/beta-readiness-2026-09-05"]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: agent/beta-readiness-2026-09-05
+          fetch-depth: 0
+      - name: Install formatter
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+      - name: Merge main, resolve known overlap, and normalize Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          merge_status=$?
+          set -e
+          if [ "$merge_status" -ne 0 ]; then
+            unexpected="$(git diff --name-only --diff-filter=U | grep -Ev '^(src-tauri/src/lib.rs|src/App.svelte|src/lib/api.ts)$' || true)"
+            if [ -n "$unexpected" ]; then
+              echo "Unexpected merge conflicts:" >&2
+              echo "$unexpected" >&2
+              exit 1
+            fi
+            git checkout --ours src-tauri/src/lib.rs src/App.svelte src/lib/api.ts
+          fi
+          git checkout origin/main -- src-tauri/src/activity.rs
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          lib = Path('src-tauri/src/lib.rs')
+          text = lib.read_text()
+          if 'mod activity;' not in text:
+              text = text.replace('mod commands;\n', 'mod activity;\nmod commands;\n', 1)
+          needle = '        .invoke_handler(tauri::generate_handler![\n            commands::session_status,'
+          if 'activity::record_user_activity' not in text:
+              if needle not in text:
+                  raise SystemExit('lib.rs invoke handler anchor missing')
+              text = text.replace(needle, '        .invoke_handler(tauri::generate_handler![\n            activity::record_user_activity,\n            commands::session_status,', 1)
+          lib.write_text(text)
+
+          api = Path('src/lib/api.ts')
+          text = api.read_text()
+          needle = "  status: () => invoke<SessionStatus>('session_status'),\n"
+          if 'recordActivity:' not in text:
+              if needle not in text:
+                  raise SystemExit('api.ts status anchor missing')
+              text = text.replace(needle, needle + "  recordActivity: () => invoke<void>('record_user_activity'),\n", 1)
+          api.write_text(text)
+
+          app = Path('src/App.svelte')
+          text = app.read_text()
+          type_anchor = "  import type { SessionStatus, VaultView } from './lib/types';\n\n"
+          if 'ACTIVITY_HEARTBEAT_MS' not in text:
+              if type_anchor not in text:
+                  raise SystemExit('App.svelte type import anchor missing')
+              text = text.replace(type_anchor, type_anchor + '  const ACTIVITY_HEARTBEAT_MS = 15_000;\n\n', 1)
+          timer_anchor = '  let statusTimer: ReturnType<typeof setInterval> | undefined;\n'
+          if 'lastActivityHeartbeat' not in text:
+              if timer_anchor not in text:
+                  raise SystemExit('App.svelte timer anchor missing')
+              text = text.replace(timer_anchor, timer_anchor + '  let lastActivityHeartbeat = 0;\n  let activityHeartbeatPending = false;\n', 1)
+          refresh_anchor = '      status = next;\n      error = \'\';'
+          if 'if (next.locked) view = \'gallery\';' not in text:
+              if refresh_anchor not in text:
+                  raise SystemExit('App.svelte refresh anchor missing')
+              text = text.replace(refresh_anchor, '      status = next;\n      if (next.locked) view = \'gallery\';\n      error = \'\';', 1)
+          guarded = '      if (generation === statusGeneration) status = next;'
+          guarded_block = '      if (generation === statusGeneration) {\n        status = next;\n        lastActivityHeartbeat = performance.now();\n      }'
+          count = text.count(guarded)
+          if count:
+              if count != 2:
+                  raise SystemExit(f'expected 2 guarded status assignments, found {count}')
+              text = text.replace(guarded, guarded_block)
+          activity_fn = '''\n  function recordUserActivity(event: Event) {\n    if (status.locked || !event.isTrusted || activityHeartbeatPending) return;\n\n    const now = performance.now();\n    if (now - lastActivityHeartbeat < ACTIVITY_HEARTBEAT_MS) return;\n    lastActivityHeartbeat = now;\n    activityHeartbeatPending = true;\n    void vaultApi\n      .recordActivity()\n      .catch(() => refreshStatus())\n      .finally(() => {\n        activityHeartbeatPending = false;\n      });\n  }\n'''
+          visibility_anchor = '\n  function visibilityChanged() {'
+          if 'function recordUserActivity' not in text:
+              if visibility_anchor not in text:
+                  raise SystemExit('App.svelte visibility anchor missing')
+              text = text.replace(visibility_anchor, activity_fn + visibility_anchor, 1)
+          mount_anchor = "    window.addEventListener('keydown', handleKeydown);\n"
+          mount_lines = "    document.addEventListener('keydown', recordUserActivity);\n    document.addEventListener('input', recordUserActivity);\n    document.addEventListener('pointerdown', recordUserActivity, { passive: true });\n    document.addEventListener('pointermove', recordUserActivity, { passive: true });\n    document.addEventListener('wheel', recordUserActivity, { passive: true });\n    document.addEventListener('touchstart', recordUserActivity, { passive: true });\n"
+          if "document.addEventListener('input', recordUserActivity)" not in text:
+              if mount_anchor not in text:
+                  raise SystemExit('App.svelte mount anchor missing')
+              text = text.replace(mount_anchor, mount_anchor + mount_lines, 1)
+          destroy_anchor = "    window.removeEventListener('keydown', handleKeydown);\n"
+          destroy_lines = "    document.removeEventListener('keydown', recordUserActivity);\n    document.removeEventListener('input', recordUserActivity);\n    document.removeEventListener('pointerdown', recordUserActivity);\n    document.removeEventListener('pointermove', recordUserActivity);\n    document.removeEventListener('wheel', recordUserActivity);\n    document.removeEventListener('touchstart', recordUserActivity);\n"
+          if "document.removeEventListener('input', recordUserActivity)" not in text:
+              if destroy_anchor not in text:
+                  raise SystemExit('App.svelte destroy anchor missing')
+              text = text.replace(destroy_anchor, destroy_anchor + destroy_lines, 1)
+          app.write_text(text)
+
+          mod = Path('src-tauri/src/gallery/mod.rs')
+          text = mod.read_text().replace('pub use trash::{GalleryTrash, GalleryTrashItem, GalleryTrashPage};', 'pub use trash::{GalleryTrash, GalleryTrashPage};')
+          mod.write_text(text)
+
+          repo = Path('src-tauri/src/gallery/repository.rs')
+          text = repo.read_text()
+          pattern = re.compile(r'\n    pub fn delete\(&self, id: Uuid\) -> Result<\(\)> \{.*?\n    fn thumbnail_state\(', re.S)
+          text, count = pattern.subn('\n    fn thumbnail_state(', text, count=1)
+          if count != 1:
+              raise SystemExit(f'expected one legacy gallery delete block, found {count}')
+          repo.write_text(text)
+          PY
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all
+          cargo fmt --manifest-path plugins/tauri-plugin-vault-source/Cargo.toml --all
+          rm .github/workflows/pr10-integrate.yml
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No integration changes were produced." >&2
+            exit 1
+          fi
+          git commit -m "merge: integrate main and fix PR 10 gates"
+          git push origin HEAD:agent/beta-readiness-2026-09-05
