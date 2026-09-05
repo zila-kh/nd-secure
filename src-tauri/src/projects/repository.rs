@@ -48,7 +48,10 @@ impl ProjectRepository {
         if let Some(parent) = db_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let repository = Self { db_path, writer: Mutex::new(()) };
+        let repository = Self {
+            db_path,
+            writer: Mutex::new(()),
+        };
         repository.initialize_schema()?;
         Ok(repository)
     }
@@ -70,7 +73,8 @@ impl ProjectRepository {
         let now = unix_timestamp()?;
         let _writer = self.writer.lock();
         let connection = self.connection()?;
-        let existing = self.find_by_root_with_connection(root_key, &connection, &inspection.root)?;
+        let existing =
+            self.find_by_root_with_connection(root_key, &connection, &inspection.root)?;
         let (id, created_at, revision) = match existing {
             Some((registration, row_revision)) => (
                 parse_uuid(&registration.id)?,
@@ -123,7 +127,12 @@ impl ProjectRepository {
         registration.root = inspection.root;
         registration.required_keys = inspection.required_keys;
         registration.updated_at = unix_timestamp()?;
-        self.write_registration(&connection, root_key, &registration, row.revision.saturating_add(1))?;
+        self.write_registration(
+            &connection,
+            root_key,
+            &registration,
+            row.revision.saturating_add(1),
+        )?;
         write_project_manifest(&registration)?;
         ensure_gitignore(&registration.root)?;
         Ok(registration)
@@ -258,8 +267,12 @@ fn map_project_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EncryptedProject
     let nonce: Vec<u8> = row.get(2)?;
     Ok(EncryptedProjectRow {
         id,
-        salt: salt.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?,
-        nonce: nonce.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?,
+        salt: salt
+            .try_into()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+        nonce: nonce
+            .try_into()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
         ciphertext: row.get(3)?,
         format_version: row.get(4)?,
         revision: row.get(5)?,
@@ -268,7 +281,10 @@ fn map_project_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EncryptedProject
     })
 }
 
-fn decrypt_project_row(root_key: &[u8; 32], row: &EncryptedProjectRow) -> Result<ProjectRegistration> {
+fn decrypt_project_row(
+    root_key: &[u8; 32],
+    row: &EncryptedProjectRow,
+) -> Result<ProjectRegistration> {
     if row.format_version != FORMAT_VERSION || row.revision <= 0 {
         return Err(VaultError::AuthenticationFailed);
     }
@@ -284,8 +300,8 @@ fn decrypt_project_row(root_key: &[u8; 32], row: &EncryptedProjectRow) -> Result
         )
         .map_err(|_| VaultError::AuthenticationFailed)?;
     let plaintext = Zeroizing::new(plaintext);
-    let registration: ProjectRegistration =
-        serde_json::from_slice(plaintext.as_slice()).map_err(|_| VaultError::AuthenticationFailed)?;
+    let registration: ProjectRegistration = serde_json::from_slice(plaintext.as_slice())
+        .map_err(|_| VaultError::AuthenticationFailed)?;
     if registration.id != row.id.to_string()
         || registration.created_at != row.created_at
         || registration.updated_at != row.updated_at
@@ -297,7 +313,11 @@ fn decrypt_project_row(root_key: &[u8; 32], row: &EncryptedProjectRow) -> Result
     Ok(registration)
 }
 
-fn project_record_key(root_key: &[u8; 32], salt: &[u8; 16], id: Uuid) -> Result<Zeroizing<[u8; 32]>> {
+fn project_record_key(
+    root_key: &[u8; 32],
+    salt: &[u8; 16],
+    id: Uuid,
+) -> Result<Zeroizing<[u8; 32]>> {
     let mut context = Vec::with_capacity(REGISTRY_CONTEXT.len() + 16);
     context.extend_from_slice(REGISTRY_CONTEXT);
     context.extend_from_slice(id.as_bytes());
@@ -324,7 +344,8 @@ fn unix_timestamp() -> Result<i64> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| VaultError::Platform("system clock is before UNIX epoch".into()))?;
-    i64::try_from(duration.as_secs()).map_err(|_| VaultError::Platform("system clock overflow".into()))
+    i64::try_from(duration.as_secs())
+        .map_err(|_| VaultError::Platform("system clock overflow".into()))
 }
 
 #[cfg(test)]
@@ -336,8 +357,13 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let project = directory.path().join("todo-project");
         fs::create_dir_all(&project).unwrap();
-        fs::write(project.join(".env.example"), "DATABASE_URL=\nAPI_TOKEN=\n").unwrap();
-        let repository = ProjectRepository::new(directory.path().join("projects.sqlite3")).unwrap();
+        fs::write(
+            project.join(".env.example"),
+            "DATABASE_URL=\nAPI_TOKEN=\n",
+        )
+        .unwrap();
+        let repository =
+            ProjectRepository::new(directory.path().join("projects.sqlite3")).unwrap();
         let key = [41_u8; 32];
         let saved = repository
             .register(
@@ -349,7 +375,9 @@ mod tests {
             .unwrap();
         assert_eq!(saved.required_keys, vec!["API_TOKEN", "DATABASE_URL"]);
         let bytes = fs::read(directory.path().join("projects.sqlite3")).unwrap();
-        assert!(!bytes.windows(b"todo-project".len()).any(|window| window == b"todo-project"));
+        assert!(!bytes
+            .windows(b"todo-project".len())
+            .any(|window| window == b"todo-project"));
         assert!(matches!(
             repository.detail(&[42_u8; 32], Uuid::parse_str(&saved.id).unwrap()),
             Err(VaultError::AuthenticationFailed)
