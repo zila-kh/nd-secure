@@ -24,6 +24,7 @@
   let loading = true;
   let busy = false;
   let error = '';
+  let statusGeneration = 0;
   let statusTimer: ReturnType<typeof setInterval> | undefined;
 
   const navigation = [
@@ -32,49 +33,64 @@
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
+  function applyStatus(next: SessionStatus) {
+    statusGeneration += 1;
+    status = next;
+  }
+
   async function refreshStatus() {
+    const generation = statusGeneration;
     try {
-      status = await vaultApi.status();
+      const next = await vaultApi.status();
+      if (generation !== statusGeneration) return;
+      status = next;
       error = '';
     } catch (cause) {
-      error = String(cause);
+      if (generation === statusGeneration) error = String(cause);
     } finally {
       loading = false;
     }
   }
 
   async function submitPassword(password: string) {
+    const generation = ++statusGeneration;
     busy = true;
     error = '';
     try {
-      status = status.initialized
+      const next = status.initialized
         ? await vaultApi.unlock(password)
         : await vaultApi.initialize(password, status.autoLockSeconds);
+      if (generation === statusGeneration) status = next;
     } catch (cause) {
-      error = String(cause);
+      if (generation === statusGeneration) error = String(cause);
     } finally {
-      busy = false;
+      if (generation === statusGeneration) busy = false;
     }
   }
 
   async function recoverVault(recoveryKey: string, newPassword: string) {
+    const generation = ++statusGeneration;
     busy = true;
     error = '';
     try {
-      status = await vaultApi.recover(recoveryKey, newPassword);
+      const next = await vaultApi.recover(recoveryKey, newPassword);
+      if (generation === statusGeneration) status = next;
     } catch (cause) {
-      error = String(cause);
+      if (generation === statusGeneration) error = String(cause);
     } finally {
-      busy = false;
+      if (generation === statusGeneration) busy = false;
     }
   }
 
   async function lock() {
+    const generation = ++statusGeneration;
     try {
-      status = await vaultApi.lock();
+      const next = await vaultApi.lock();
+      if (generation !== statusGeneration) return;
+      status = next;
       view = 'gallery';
     } catch (cause) {
-      error = String(cause);
+      if (generation === statusGeneration) error = String(cause);
     }
   }
 
@@ -167,7 +183,7 @@
       {:else if view === 'passwords'}
         <PasswordView />
       {:else}
-        <SettingsView {status} onStatus={(next) => (status = next)} />
+        <SettingsView {status} onStatus={applyStatus} />
       {/if}
     </main>
 
