@@ -8,6 +8,11 @@ import type {
   ImportMediaResult,
   MediaStreamHandle,
   PasswordGeneratorOptions,
+  ProjectCommandResult,
+  ProjectEnvImportResult,
+  ProjectEnvironmentStatus,
+  ProjectInspection,
+  ProjectRegistration,
   RecoveryKey,
   SessionStatus,
   TotpCode
@@ -69,7 +74,20 @@ export const vaultApi = {
     invoke<GeneratedPassword>('generate_password', { length, symbols }),
   generatePasswordAdvanced: (options: PasswordGeneratorOptions) =>
     invoke<GeneratedPassword>('generate_password_advanced', { options }),
-  totpCode: (id: string) => invoke<TotpCode>('credential_totp', { id })
+  totpCode: (id: string) => invoke<TotpCode>('credential_totp', { id }),
+
+  inspectProject: (root: string) => invoke<ProjectInspection>('inspect_project', { root }),
+  projectList: () => invoke<ProjectRegistration[]>('project_list'),
+  registerProject: (root: string, name: string, environments: string[]) =>
+    invoke<ProjectRegistration>('register_project', { root, name, environments }),
+  syncProject: (id: string) => invoke<ProjectRegistration>('sync_project', { id }),
+  deleteProject: (id: string) => invoke<void>('delete_project', { id }),
+  projectEnvironmentStatus: (id: string, environment: string) =>
+    invoke<ProjectEnvironmentStatus>('project_environment_status', { id, environment }),
+  importProjectEnv: (id: string, environment: string, fileName: string) =>
+    invoke<ProjectEnvImportResult>('import_project_env', { id, environment, fileName }),
+  runProjectCommand: (id: string, environment: string, program: string, args: string[]) =>
+    invoke<ProjectCommandResult>('run_project_command', { id, environment, program, args })
 };
 
 export function mediaUrl(id: string): string {
