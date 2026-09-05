@@ -9,9 +9,10 @@ test -s "$macos"
 if [[ "$ANDROID_ENABLED" == "true" ]]; then
   test -s "release/ND-Secure_${VERSION}_android-arm64.apk"
   test -s "release/ND-Secure_${VERSION}_android-arm64.aab"
-  android_status="Signed Android APK and AAB are included."
+  android_status="Production-signed Android APK and AAB are included."
 else
-  android_status="Android artifacts are omitted because Android signing secrets are not configured."
+  test -s "release/ND-Secure_${VERSION}_android-arm64-unsigned.apk"
+  android_status="Unsigned release-mode Android APK is included for downstream/local signing; it is not installable until signed."
 fi
 
 (
