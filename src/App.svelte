@@ -89,15 +89,27 @@
     }
   }
 
+  function handleKeydown(event: KeyboardEvent) {
+    const quickLock = event.shiftKey
+      && (event.metaKey || event.ctrlKey)
+      && !event.altKey
+      && event.key.toLowerCase() === 'l';
+    if (!quickLock || status.locked || event.repeat) return;
+    event.preventDefault();
+    void lock();
+  }
+
   onMount(() => {
     void refreshStatus();
     statusTimer = setInterval(refreshStatus, 5000);
     document.addEventListener('visibilitychange', visibilityChanged);
+    window.addEventListener('keydown', handleKeydown);
   });
 
   onDestroy(() => {
     if (statusTimer) clearInterval(statusTimer);
     document.removeEventListener('visibilitychange', visibilityChanged);
+    window.removeEventListener('keydown', handleKeydown);
   });
 </script>
 
@@ -140,7 +152,12 @@
       </nav>
 
       <div class="mt-auto">
-        <Button variant="secondary" className="w-full" on:click={lock}><Lock size={17} /> Lock vault</Button>
+        <Button
+          variant="secondary"
+          className="w-full"
+          on:click={lock}
+          title="Quick lock: Ctrl/Cmd + Shift + L"
+        ><Lock size={17} /> Lock vault</Button>
       </div>
     </aside>
 
