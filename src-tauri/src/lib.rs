@@ -65,8 +65,7 @@ pub fn run() {
                     && state.session.lock_on_blur());
                 #[cfg(mobile)]
                 let should_lock = should_lock
-                    || (matches!(event, tauri::WindowEvent::Suspended)
-                        && state.session.lock_on_suspend());
+                    || (matches!(event, tauri::WindowEvent::Suspended) && state.session.lock_on_suspend());
 
                 if should_lock {
                     state.media_server.revoke_all();
