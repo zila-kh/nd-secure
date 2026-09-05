@@ -36,7 +36,10 @@ where
 }
 
 #[tauri::command]
-pub async fn inspect_project(state: State<'_, AppState>, root: String) -> CommandResult<ProjectInspection> {
+pub async fn inspect_project(
+    state: State<'_, AppState>,
+    root: String,
+) -> CommandResult<ProjectInspection> {
     state.session.touch().map_err(public_error)?;
     if root.len() > 32 * 1024 {
         return Err("project path is too long".into());
@@ -46,8 +49,13 @@ pub async fn inspect_project(state: State<'_, AppState>, root: String) -> Comman
 }
 
 #[tauri::command]
-pub async fn project_list(state: State<'_, AppState>) -> CommandResult<Vec<ProjectRegistration>> {
-    let key = state.session.domain_key(PROJECTS_DOMAIN).map_err(public_error)?;
+pub async fn project_list(
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<ProjectRegistration>> {
+    let key = state
+        .session
+        .domain_key(PROJECTS_DOMAIN)
+        .map_err(public_error)?;
     let repository = Arc::clone(&state.projects);
     blocking(move || repository.list(&key)).await
 }
@@ -62,15 +70,24 @@ pub async fn register_project(
     if root.len() > 32 * 1024 || name.len() > 256 || environments.len() > 32 {
         return Err("project registration input is too large".into());
     }
-    let key = state.session.domain_key(PROJECTS_DOMAIN).map_err(public_error)?;
+    let key = state
+        .session
+        .domain_key(PROJECTS_DOMAIN)
+        .map_err(public_error)?;
     let repository = Arc::clone(&state.projects);
     blocking(move || repository.register(&key, root, name, environments)).await
 }
 
 #[tauri::command]
-pub async fn sync_project(state: State<'_, AppState>, id: String) -> CommandResult<ProjectRegistration> {
+pub async fn sync_project(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<ProjectRegistration> {
     let id = canonical_uuid(&id).map_err(public_error)?;
-    let key = state.session.domain_key(PROJECTS_DOMAIN).map_err(public_error)?;
+    let key = state
+        .session
+        .domain_key(PROJECTS_DOMAIN)
+        .map_err(public_error)?;
     let repository = Arc::clone(&state.projects);
     blocking(move || repository.sync(&key, id)).await
 }
@@ -93,12 +110,24 @@ pub async fn project_environment_status(
     if environment.len() > 64 {
         return Err("project environment name is too long".into());
     }
-    let project_key = state.session.domain_key(PROJECTS_DOMAIN).map_err(public_error)?;
-    let credential_key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
+    let project_key = state
+        .session
+        .domain_key(PROJECTS_DOMAIN)
+        .map_err(public_error)?;
+    let credential_key = state
+        .session
+        .domain_key(CREDENTIALS_DOMAIN)
+        .map_err(public_error)?;
     let projects = Arc::clone(&state.projects);
     let credentials = Arc::clone(&state.credentials);
     blocking(move || {
-        projects.environment_status(&project_key, credentials.as_ref(), &credential_key, id, &environment)
+        projects.environment_status(
+            &project_key,
+            credentials.as_ref(),
+            &credential_key,
+            id,
+            &environment,
+        )
     })
     .await
 }
@@ -114,8 +143,14 @@ pub async fn import_project_env(
     if environment.len() > 64 || file_name.len() > 512 {
         return Err("project environment import input is too large".into());
     }
-    let project_key = state.session.domain_key(PROJECTS_DOMAIN).map_err(public_error)?;
-    let credential_key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
+    let project_key = state
+        .session
+        .domain_key(PROJECTS_DOMAIN)
+        .map_err(public_error)?;
+    let credential_key = state
+        .session
+        .domain_key(CREDENTIALS_DOMAIN)
+        .map_err(public_error)?;
     let projects = Arc::clone(&state.projects);
     let credentials = Arc::clone(&state.credentials);
     blocking(move || {
@@ -139,13 +174,22 @@ pub async fn run_project_command(
     program: String,
     args: Vec<String>,
 ) -> CommandResult<ProjectCommandResult> {
-    state.session.require_recent_reauthentication().map_err(public_error)?;
+    state
+        .session
+        .require_recent_reauthentication()
+        .map_err(public_error)?;
     let id = canonical_uuid(&id).map_err(public_error)?;
     if environment.len() > 64 || program.len() > 4096 || args.len() > 256 {
         return Err("project command input is too large".into());
     }
-    let project_key = state.session.domain_key(PROJECTS_DOMAIN).map_err(public_error)?;
-    let credential_key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
+    let project_key = state
+        .session
+        .domain_key(PROJECTS_DOMAIN)
+        .map_err(public_error)?;
+    let credential_key = state
+        .session
+        .domain_key(CREDENTIALS_DOMAIN)
+        .map_err(public_error)?;
     let projects = Arc::clone(&state.projects);
     let credentials = Arc::clone(&state.credentials);
     blocking(move || {
@@ -163,7 +207,8 @@ pub async fn run_project_command(
 }
 
 fn canonical_uuid(value: &str) -> Result<Uuid> {
-    let parsed = Uuid::parse_str(value).map_err(|_| VaultError::InvalidInput("invalid UUID".into()))?;
+    let parsed =
+        Uuid::parse_str(value).map_err(|_| VaultError::InvalidInput("invalid UUID".into()))?;
     if parsed.to_string() != value {
         return Err(VaultError::InvalidInput("UUID is not canonical".into()));
     }
