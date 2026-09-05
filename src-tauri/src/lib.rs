@@ -20,7 +20,7 @@ use tauri::{
 
 use crate::{
     credentials::CredentialRepository,
-    gallery::{GalleryRepository, GalleryTrash},
+    gallery::{prepare_trash_recovery, GalleryRepository, GalleryTrash},
     media_server::MediaServer,
     paths::VaultPaths,
     session::SessionState,
@@ -84,6 +84,11 @@ pub fn run() {
             let paths = VaultPaths::new(&local_data);
             paths.create_all()?;
 
+            prepare_trash_recovery(
+                &paths.gallery_db,
+                &paths.gallery_objects,
+                &paths.gallery_thumbnails,
+            )?;
             let session = Arc::new(SessionState::new(paths.header.clone()));
             let gallery = Arc::new(GalleryRepository::new(
                 paths.gallery_db.clone(),
