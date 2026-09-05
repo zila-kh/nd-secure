@@ -66,11 +66,7 @@ impl HealthAccumulator {
     fn issue(&mut self, area: &str, id: Option<String>, message: &str) {
         self.total_issues = self.total_issues.saturating_add(1);
         if self.issues.len() < MAX_REPORTED_ISSUES {
-            self.issues.push(VaultHealthIssue {
-                area: area.to_owned(),
-                id,
-                message: message.to_owned(),
-            });
+            self.issues.push(VaultHealthIssue { area: area.to_owned(), id, message: message.to_owned() });
         }
     }
 
@@ -143,7 +139,11 @@ fn check_gallery(gallery: &GalleryRepository, gallery_key: &[u8; 32], health: &m
             let id = match canonical_uuid(&item.id) {
                 Ok(id) => id,
                 Err(_) => {
-                    health.issue("gallery", Some(item.id), "Gallery index contains an invalid item identifier");
+                    health.issue(
+                        "gallery",
+                        Some(item.id),
+                        "Gallery index contains an invalid item identifier",
+                    );
                     continue;
                 }
             };
@@ -201,11 +201,7 @@ fn check_gallery(gallery: &GalleryRepository, gallery_key: &[u8; 32], health: &m
     }
 }
 
-fn check_gallery_trash(
-    gallery_trash: &GalleryTrash,
-    gallery_key: &[u8; 32],
-    health: &mut HealthAccumulator,
-) {
+fn check_gallery_trash(gallery_trash: &GalleryTrash, gallery_key: &[u8; 32], health: &mut HealthAccumulator) {
     let mut cursor = None;
     let mut seen_cursors = HashSet::new();
 
@@ -273,7 +269,11 @@ fn check_credentials(
         let page = match page {
             Ok(page) => page,
             Err(_) => {
-                health.issue(area, None, "Encrypted credential records failed authentication or could not be read");
+                health.issue(
+                    area,
+                    None,
+                    "Encrypted credential records failed authentication or could not be read",
+                );
                 break;
             }
         };
