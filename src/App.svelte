@@ -9,6 +9,8 @@
   import Button from './lib/components/ui/Button.svelte';
   import type { SessionStatus, VaultView } from './lib/types';
 
+  const ACTIVITY_HEARTBEAT_MS = 15_000;
+
   let status: SessionStatus = {
     initialized: false,
     locked: true,
@@ -25,6 +27,8 @@
   let busy = false;
   let error = '';
   let statusTimer: ReturnType<typeof setInterval> | undefined;
+  let lastActivityHeartbeat = 0;
+  let activityHeartbeatPending = false;
 
   const navigation = [
     { id: 'gallery' as const, label: 'Gallery', icon: Images },
@@ -35,6 +39,7 @@
   async function refreshStatus() {
     try {
       status = await vaultApi.status();
+      if (status.locked) view = 'gallery';
       error = '';
     } catch (cause) {
       error = String(cause);
@@ -50,6 +55,7 @@
       status = status.initialized
         ? await vaultApi.unlock(password)
         : await vaultApi.initialize(password, status.autoLockSeconds);
+      lastActivityHeartbeat = performance.now();
     } catch (cause) {
       error = String(cause);
     } finally {
@@ -62,6 +68,7 @@
     error = '';
     try {
       status = await vaultApi.recover(recoveryKey, newPassword);
+      lastActivityHeartbeat = performance.now();
     } catch (cause) {
       error = String(cause);
     } finally {
@@ -76,6 +83,21 @@
     } catch (cause) {
       error = String(cause);
     }
+  }
+
+  function recordUserActivity(event: Event) {
+    if (status.locked || !event.isTrusted || activityHeartbeatPending) return;
+
+    const now = performance.now();
+    if (now - lastActivityHeartbeat < ACTIVITY_HEARTBEAT_MS) return;
+    lastActivityHeartbeat = now;
+    activityHeartbeatPending = true;
+    void vaultApi
+      .recordActivity()
+      .catch(() => refreshStatus())
+      .finally(() => {
+        activityHeartbeatPending = false;
+      });
   }
 
   function visibilityChanged() {
@@ -93,11 +115,23 @@
     void refreshStatus();
     statusTimer = setInterval(refreshStatus, 5000);
     document.addEventListener('visibilitychange', visibilityChanged);
+    document.addEventListener('keydown', recordUserActivity);
+    document.addEventListener('input', recordUserActivity);
+    document.addEventListener('pointerdown', recordUserActivity, { passive: true });
+    document.addEventListener('pointermove', recordUserActivity, { passive: true });
+    document.addEventListener('wheel', recordUserActivity, { passive: true });
+    document.addEventListener('touchstart', recordUserActivity, { passive: true });
   });
 
   onDestroy(() => {
     if (statusTimer) clearInterval(statusTimer);
     document.removeEventListener('visibilitychange', visibilityChanged);
+    document.removeEventListener('keydown', recordUserActivity);
+    document.removeEventListener('input', recordUserActivity);
+    document.removeEventListener('pointerdown', recordUserActivity);
+    document.removeEventListener('pointermove', recordUserActivity);
+    document.removeEventListener('wheel', recordUserActivity);
+    document.removeEventListener('touchstart', recordUserActivity);
   });
 </script>
 
