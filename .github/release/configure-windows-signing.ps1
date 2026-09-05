@@ -7,10 +7,11 @@ $values = @(
 )
 $present = @($values | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
 if ($present -eq 0) {
-  throw "Windows production signing is required. Configure WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD, and WINDOWS_TIMESTAMP_URL before publishing a real-user release."
+  Write-Host "Windows signing is not configured; building an unsigned NSIS installer."
+  exit 0
 }
 if ($present -ne $values.Count) {
-  throw "Configure all Windows signing secrets: WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD, and WINDOWS_TIMESTAMP_URL."
+  throw "Configure all Windows signing secrets or none of them: WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD, and WINDOWS_TIMESTAMP_URL."
 }
 
 $certificatePath = Join-Path $env:RUNNER_TEMP "windows-certificate.pfx"
