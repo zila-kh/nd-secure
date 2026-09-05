@@ -9,8 +9,6 @@ updates:
       timezone: "Asia/Phnom_Penh"
     open-pull-requests-limit: 5
     target-branch: "main"
-    labels:
-      - "dependencies"
 
   - package-ecosystem: "cargo"
     directory: "/src-tauri"
@@ -21,8 +19,6 @@ updates:
       timezone: "Asia/Phnom_Penh"
     open-pull-requests-limit: 5
     target-branch: "main"
-    labels:
-      - "dependencies"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -33,5 +29,3 @@ updates:
       timezone: "Asia/Phnom_Penh"
     open-pull-requests-limit: 5
     target-branch: "main"
-    labels:
-      - "dependencies"
