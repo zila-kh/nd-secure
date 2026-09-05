@@ -7,7 +7,7 @@ The pipeline is deliberately staged:
 1. Derive a unique release version and Android `versionCode` from the version in `src-tauri/tauri.conf.json` and the workflow run number.
 2. Run frontend and Rust validation.
 3. Build Windows x64 and Apple Silicon macOS in parallel.
-4. Build Android ARM64 only when a complete Android signing configuration is present.
+4. Build Android ARM64 as an optimized release APK on every release run. With a complete Android signing configuration, also sign the APK/AAB for distribution; without signing credentials, publish the release APK explicitly marked unsigned for downstream/local signing.
 5. Create one release only after every required build succeeds, then attach `SHA256SUMS`.
 
 For example, a base app version of `0.1.0` and workflow run `12` produces release version `0.1.12` and tag `v0.1.12`. Bump the base major/minor version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `package.json` when starting a new release line.
@@ -25,7 +25,11 @@ When Android signing is configured, the same release also contains:
 - `ND-Secure_<version>_android-arm64.apk`
 - `ND-Secure_<version>_android-arm64.aab`
 
-The workflow never publishes an unsigned Android package. Without all Android secrets, Android is intentionally omitted while the desktop release continues.
+Without Android signing credentials, the release contains:
+
+- `ND-Secure_<version>_android-arm64-unsigned.apk`
+
+The unsigned APK is the optimized release-mode Android build, but Android will not install it until it is signed. The workflow verifies that this fallback file has no valid APK signature before publishing it, so it cannot be confused with a production-signed package. Do not distribute it to end users as an installable production build; sign it with a stable private key first.
 
 ## Repository secrets
 
@@ -40,7 +44,7 @@ Required together:
 - `ANDROID_KEYSTORE_PASSWORD`: keystore password
 - `ANDROID_KEY_PASSWORD`: key password
 
-The workflow signs the APK with `apksigner`, signs the AAB with `jarsigner`, and verifies both before upload.
+The workflow signs the APK with `apksigner`, signs the AAB with `jarsigner`, and verifies both before upload. When the group is completely absent, it publishes only the explicitly named unsigned APK and does not produce an AAB.
 
 ### Windows Authenticode signing
 
@@ -73,4 +77,4 @@ The release job is serialized with a concurrency group and does not cancel an in
 
 ## Dependency reproducibility
 
-This repository currently has no committed `package-lock.json` or `Cargo.lock`. The workflow therefore uses `npm install` and normal Cargo resolution. For fully reproducible production builds, generate, review, and commit both lockfiles, then change the workflow to `npm ci` and Cargo commands with `--locked`.
+This repository currently commits both `package-lock.json` and `src-tauri/Cargo.lock`. Release validation uses `npm ci` and Cargo with `--locked` so JavaScript and Rust dependency resolution are pinned to reviewed lockfiles.
