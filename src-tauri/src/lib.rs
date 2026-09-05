@@ -62,7 +62,8 @@ pub fn run() {
                     && state.session.lock_on_blur());
                 #[cfg(mobile)]
                 let should_lock = should_lock
-                    || (matches!(event, tauri::WindowEvent::Suspended) && state.session.lock_on_suspend());
+                    || (matches!(event, tauri::WindowEvent::Suspended)
+                        && state.session.lock_on_suspend());
 
                 if should_lock {
                     state.media_server.revoke_all();
@@ -89,7 +90,10 @@ pub fn run() {
             )?);
             let credentials = Arc::new(CredentialRepository::new(paths.credentials_db.clone())?);
             let projects = Arc::new(ProjectRepository::new(paths.projects_db.clone())?);
-            let media_server = Arc::new(MediaServer::start(Arc::clone(&session), Arc::clone(&gallery))?);
+            let media_server = Arc::new(MediaServer::start(
+                Arc::clone(&session),
+                Arc::clone(&gallery),
+            )?);
             let state = AppState::new(session, gallery, credentials, projects, media_server);
 
             if protocol_setup_state.set(state.clone()).is_err() {
