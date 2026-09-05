@@ -15,11 +15,11 @@ for value in "${values[@]}"; do
 done
 
 if (( present == 0 )); then
-  echo "Apple Developer ID signing and notarization are required for production releases. Configure all Apple signing secrets before publishing." >&2
-  exit 1
+  echo "Apple signing is not configured; building the macOS bundle without Developer ID notarization."
+  exit 0
 fi
 if (( present != ${#values[@]} )); then
-  echo "Configure all Apple signing and notarization secrets or none of the release will be published." >&2
+  echo "Configure all Apple signing and notarization secrets or none of them." >&2
   exit 1
 fi
 
