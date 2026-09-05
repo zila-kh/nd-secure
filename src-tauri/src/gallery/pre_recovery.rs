@@ -10,11 +10,7 @@ const TRASH_VARIANTS: [&str; 4] = ["trash", "trashing", "restoring", "purging"];
 /// Reconciles journaled gallery transitions before `GalleryRepository` performs its own startup
 /// cleanup. This prevents an interrupted Trash/restore operation from being mistaken for an
 /// orphaned active record and discarded before the Trash journal can repair it.
-pub fn prepare_trash_recovery(
-    db_path: &Path,
-    objects_dir: &Path,
-    thumbnails_dir: &Path,
-) -> Result<()> {
+pub fn prepare_trash_recovery(db_path: &Path, objects_dir: &Path, thumbnails_dir: &Path) -> Result<()> {
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -27,8 +23,7 @@ pub fn prepare_trash_recovery(
         return Ok(());
     }
 
-    let mut statement =
-        connection.prepare("SELECT id FROM media_trash ORDER BY deleted_at DESC, id DESC")?;
+    let mut statement = connection.prepare("SELECT id FROM media_trash ORDER BY deleted_at DESC, id DESC")?;
     let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
     let ids = rows.collect::<std::result::Result<Vec<_>, _>>()?;
     drop(statement);
@@ -120,9 +115,7 @@ fn open_connection(path: &Path) -> Result<Connection> {
 }
 
 fn canonical_uuid(value: &str) -> Option<Uuid> {
-    Uuid::parse_str(value)
-        .ok()
-        .filter(|parsed| parsed.to_string() == value)
+    Uuid::parse_str(value).ok().filter(|parsed| parsed.to_string() == value)
 }
 
 #[cfg(test)]
@@ -152,8 +145,7 @@ mod tests {
         let db = directory.path().join("gallery.sqlite3");
         let objects = directory.path().join("objects");
         let thumbnails = directory.path().join("thumbnails");
-        let repository =
-            GalleryRepository::new(db.clone(), objects.clone(), thumbnails.clone()).unwrap();
+        let repository = GalleryRepository::new(db.clone(), objects.clone(), thumbnails.clone()).unwrap();
         prepare_trash_recovery(&db, &objects, &thumbnails).unwrap();
 
         let key = [97_u8; 32];
@@ -174,17 +166,14 @@ mod tests {
         drop(repository);
 
         prepare_trash_recovery(&db, &objects, &thumbnails).unwrap();
-        let recovered =
-            GalleryRepository::new(db.clone(), objects.clone(), thumbnails.clone()).unwrap();
+        let recovered = GalleryRepository::new(db.clone(), objects.clone(), thumbnails.clone()).unwrap();
         assert_eq!(recovered.get(id).unwrap().id, id.to_string());
         assert!(recovered.thumbnail_object(id).is_ok());
         let connection = Connection::open(db).unwrap();
         let remaining: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM media_trash WHERE id = ?1",
-                params![id.to_string()],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM media_trash WHERE id = ?1", params![id.to_string()], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(remaining, 0);
     }
@@ -195,9 +184,7 @@ mod tests {
         image.write_to(&mut encoded, ImageFormat::Png).unwrap();
         let bytes = encoded.into_inner();
         let mut source = Cursor::new(bytes.as_slice());
-        let id = repository
-            .import_reader(key, &mut source, bytes.len() as u64)
-            .unwrap();
+        let id = repository.import_reader(key, &mut source, bytes.len() as u64).unwrap();
         Uuid::parse_str(&id).unwrap()
     }
 }
