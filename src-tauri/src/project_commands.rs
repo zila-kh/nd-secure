@@ -7,8 +7,8 @@ use crate::{
     crypto::{CREDENTIALS_DOMAIN, PROJECTS_DOMAIN},
     error::{Result, VaultError},
     projects::{
-        ProjectCommandResult, ProjectEnvImportResult, ProjectEnvironmentStatus, ProjectInspection,
-        ProjectRegistration,
+        ProjectCommandRequest, ProjectCommandResult, ProjectEnvImportResult, ProjectEnvironmentStatus,
+        ProjectInspection, ProjectRegistration,
     },
     state::AppState,
 };
@@ -148,16 +148,9 @@ pub async fn run_project_command(
     let credential_key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
     let projects = Arc::clone(&state.projects);
     let credentials = Arc::clone(&state.credentials);
+    let request = ProjectCommandRequest { id, environment, program, args };
     blocking(move || {
-        projects.run_command(
-            &project_key,
-            credentials.as_ref(),
-            &credential_key,
-            id,
-            &environment,
-            &program,
-            args,
-        )
+        projects.run_command(&project_key, credentials.as_ref(), &credential_key, request)
     })
     .await
 }
