@@ -3,6 +3,7 @@ mod repository;
 mod runtime;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 pub use repository::ProjectRepository;
 
@@ -66,6 +67,13 @@ pub struct ProjectEnvImportResult {
 pub struct ProjectCommandResult {
     pub pid: u32,
     pub injected_keys: Vec<String>,
+}
+
+pub(crate) struct ProjectCommandRequest {
+    pub(crate) id: Uuid,
+    pub(crate) environment: String,
+    pub(crate) program: String,
+    pub(crate) args: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
