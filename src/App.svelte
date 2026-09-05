@@ -9,6 +9,8 @@
   import Button from './lib/components/ui/Button.svelte';
   import type { SessionStatus, VaultView } from './lib/types';
 
+  const ACTIVITY_HEARTBEAT_MS = 15_000;
+
   let status: SessionStatus = {
     initialized: false,
     locked: true,
@@ -26,6 +28,8 @@
   let error = '';
   let statusGeneration = 0;
   let statusTimer: ReturnType<typeof setInterval> | undefined;
+  let lastActivityHeartbeat = 0;
+  let activityHeartbeatPending = false;
 
   const navigation = [
     { id: 'gallery' as const, label: 'Gallery', icon: Images },
@@ -44,6 +48,7 @@
       const next = await vaultApi.status();
       if (generation !== statusGeneration) return;
       status = next;
+      if (next.locked) view = 'gallery';
       error = '';
     } catch (cause) {
       if (generation === statusGeneration) error = String(cause);
@@ -60,7 +65,10 @@
       const next = status.initialized
         ? await vaultApi.unlock(password)
         : await vaultApi.initialize(password, status.autoLockSeconds);
-      if (generation === statusGeneration) status = next;
+      if (generation === statusGeneration) {
+        status = next;
+        lastActivityHeartbeat = performance.now();
+      }
     } catch (cause) {
       if (generation === statusGeneration) error = String(cause);
     } finally {
@@ -74,7 +82,10 @@
     error = '';
     try {
       const next = await vaultApi.recover(recoveryKey, newPassword);
-      if (generation === statusGeneration) status = next;
+      if (generation === statusGeneration) {
+        status = next;
+        lastActivityHeartbeat = performance.now();
+      }
     } catch (cause) {
       if (generation === statusGeneration) error = String(cause);
     } finally {
@@ -92,6 +103,21 @@
     } catch (cause) {
       if (generation === statusGeneration) error = String(cause);
     }
+  }
+
+  function recordUserActivity(event: Event) {
+    if (status.locked || !event.isTrusted || activityHeartbeatPending) return;
+
+    const now = performance.now();
+    if (now - lastActivityHeartbeat < ACTIVITY_HEARTBEAT_MS) return;
+    lastActivityHeartbeat = now;
+    activityHeartbeatPending = true;
+    void vaultApi
+      .recordActivity()
+      .catch(() => refreshStatus())
+      .finally(() => {
+        activityHeartbeatPending = false;
+      });
   }
 
   function visibilityChanged() {
@@ -120,12 +146,24 @@
     statusTimer = setInterval(refreshStatus, 5000);
     document.addEventListener('visibilitychange', visibilityChanged);
     window.addEventListener('keydown', handleKeydown);
+    document.addEventListener('keydown', recordUserActivity);
+    document.addEventListener('input', recordUserActivity);
+    document.addEventListener('pointerdown', recordUserActivity, { passive: true });
+    document.addEventListener('pointermove', recordUserActivity, { passive: true });
+    document.addEventListener('wheel', recordUserActivity, { passive: true });
+    document.addEventListener('touchstart', recordUserActivity, { passive: true });
   });
 
   onDestroy(() => {
     if (statusTimer) clearInterval(statusTimer);
     document.removeEventListener('visibilitychange', visibilityChanged);
     window.removeEventListener('keydown', handleKeydown);
+    document.removeEventListener('keydown', recordUserActivity);
+    document.removeEventListener('input', recordUserActivity);
+    document.removeEventListener('pointerdown', recordUserActivity);
+    document.removeEventListener('pointermove', recordUserActivity);
+    document.removeEventListener('wheel', recordUserActivity);
+    document.removeEventListener('touchstart', recordUserActivity);
   });
 </script>
 

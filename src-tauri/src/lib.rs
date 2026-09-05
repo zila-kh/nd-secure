@@ -1,3 +1,4 @@
+mod activity;
 mod commands;
 mod credentials;
 mod crypto;
@@ -111,6 +112,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            activity::record_user_activity,
             commands::session_status,
             commands::initialize_vault,
             commands::unlock_vault,

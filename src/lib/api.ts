@@ -17,6 +17,7 @@ import type {
 
 export const vaultApi = {
   status: () => invoke<SessionStatus>('session_status'),
+  recordActivity: () => invoke<void>('record_user_activity'),
   initialize: (password: string, autoLockSeconds = 300) =>
     invoke<SessionStatus>('initialize_vault', { password, autoLockSeconds }),
   unlock: (password: string) => invoke<SessionStatus>('unlock_vault', { password }),

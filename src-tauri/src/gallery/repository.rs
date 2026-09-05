@@ -386,66 +386,6 @@ impl GalleryRepository {
         Ok(path)
     }
 
-    pub fn delete(&self, id: Uuid) -> Result<()> {
-        let _writer = self.writer.lock();
-        let path = self.object_path(id)?;
-        let deleting = self.objects_dir.join(format!("{id}.deleting"));
-        let thumbnail = self.thumbnail_path_for_delete(id)?;
-        let thumbnail_deleting = self.thumbnails_dir.join(format!("{id}.deleting"));
-
-        fs::rename(&path, &deleting)?;
-        if let Some(thumbnail_path) = thumbnail.as_ref() {
-            if let Err(error) = fs::rename(thumbnail_path, &thumbnail_deleting) {
-                let _ = fs::rename(&deleting, &path);
-                return Err(error.into());
-            }
-        }
-
-        let database_result = (|| -> Result<()> {
-            let mut connection = self.connection()?;
-            let transaction = connection.transaction()?;
-            let deleted =
-                transaction.execute("DELETE FROM media_items WHERE id = ?1", params![id.to_string()])?;
-            if deleted != 1 {
-                return Err(VaultError::NotFound);
-            }
-            transaction.commit()?;
-            Ok(())
-        })();
-
-        if let Err(error) = database_result {
-            let _ = fs::rename(&deleting, &path);
-            if let Some(thumbnail_path) = thumbnail.as_ref() {
-                let _ = fs::rename(&thumbnail_deleting, thumbnail_path);
-            }
-            return Err(error);
-        }
-
-        remove_file_if_present(&deleting);
-        remove_file_if_present(&thumbnail_deleting);
-        Ok(())
-    }
-
-    fn thumbnail_path_for_delete(&self, id: Uuid) -> Result<Option<PathBuf>> {
-        let connection = self.connection()?;
-        let record: Option<(String, i64)> = connection
-            .query_row(
-                "SELECT masked_name, container_version
-                 FROM media_thumbnails WHERE media_id = ?1",
-                params![id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-        let Some((masked_name, container_version)) = record else {
-            return Ok(None);
-        };
-        if masked_name != format!("{id}.enc") || container_version != CONTAINER_VERSION {
-            return Err(VaultError::AuthenticationFailed);
-        }
-        let path = self.thumbnails_dir.join(masked_name);
-        Ok(path.is_file().then_some(path))
-    }
-
     fn thumbnail_state(&self, media_id: Uuid) -> Result<i64> {
         let connection = self.connection()?;
         connection

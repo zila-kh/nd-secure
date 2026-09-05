@@ -7,4 +7,4 @@ mod trash;
 pub use container::ContainerReader;
 pub use pre_recovery::prepare_trash_recovery;
 pub use repository::{GalleryObject, GalleryPage, GalleryRepository};
-pub use trash::{GalleryTrash, GalleryTrashItem, GalleryTrashPage};
+pub use trash::{GalleryTrash, GalleryTrashPage};

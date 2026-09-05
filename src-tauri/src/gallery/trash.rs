@@ -949,9 +949,7 @@ mod tests {
         let purging = directory.path().join("objects").join(format!("{id}.purging"));
         fs::rename(&object_trash, &purging).unwrap();
         let connection = Connection::open(directory.path().join("gallery.sqlite3")).unwrap();
-        connection
-            .execute("DELETE FROM media_trash WHERE id = ?1", params![id.to_string()])
-            .unwrap();
+        connection.execute("DELETE FROM media_trash WHERE id = ?1", params![id.to_string()]).unwrap();
         drop(connection);
         drop(trash);
 
