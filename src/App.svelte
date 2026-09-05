@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { Images, KeyRound, LoaderCircle, Lock, Settings, ShieldCheck } from 'lucide-svelte';
+  import { FolderOpen, Images, KeyRound, LoaderCircle, Lock, Settings, ShieldCheck } from 'lucide-svelte';
   import { onDestroy, onMount } from 'svelte';
   import { vaultApi } from './lib/api';
   import GalleryView from './lib/components/GalleryView.svelte';
   import PasswordView from './lib/components/PasswordView.svelte';
+  import ProjectView from './lib/components/ProjectView.svelte';
   import SettingsView from './lib/components/SettingsView.svelte';
   import UnlockScreen from './lib/components/UnlockScreen.svelte';
   import Button from './lib/components/ui/Button.svelte';
@@ -29,6 +30,7 @@
   const navigation = [
     { id: 'gallery' as const, label: 'Gallery', icon: Images },
     { id: 'passwords' as const, label: 'Passwords', icon: KeyRound },
+    { id: 'projects' as const, label: 'Projects', icon: FolderOpen },
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
@@ -149,6 +151,8 @@
         <GalleryView />
       {:else if view === 'passwords'}
         <PasswordView />
+      {:else if view === 'projects'}
+        <ProjectView />
       {:else}
         <SettingsView {status} onStatus={(next) => (status = next)} />
       {/if}
@@ -157,14 +161,14 @@
     <nav class="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-border bg-card/95 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
       {#each navigation as item}
         <button
-          class={`flex min-w-[72px] flex-col items-center gap-1 px-3 py-2 text-xs ${view === item.id ? 'text-primary' : 'text-muted-foreground'}`}
+          class={`flex min-w-[64px] flex-col items-center gap-1 px-2 py-2 text-xs ${view === item.id ? 'text-primary' : 'text-muted-foreground'}`}
           on:click={() => (view = item.id)}
         >
           <svelte:component this={item.icon} size={20} />
           {item.label}
         </button>
       {/each}
-      <button class="flex min-w-[72px] flex-col items-center gap-1 px-3 py-2 text-xs text-muted-foreground" on:click={lock}>
+      <button class="flex min-w-[64px] flex-col items-center gap-1 px-2 py-2 text-xs text-muted-foreground" on:click={lock}>
         <Lock size={20} /> Lock
       </button>
     </nav>
