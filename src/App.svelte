@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { Images, KeyRound, LoaderCircle, Lock, Settings, ShieldCheck } from 'lucide-svelte';
+  import { FolderOpen, Images, KeyRound, LoaderCircle, Lock, Settings, ShieldCheck } from 'lucide-svelte';
   import { onDestroy, onMount } from 'svelte';
   import { vaultApi } from './lib/api';
   import GalleryView from './lib/components/GalleryView.svelte';
   import PasswordView from './lib/components/PasswordView.svelte';
+  import ProjectView from './lib/components/ProjectView.svelte';
   import SettingsView from './lib/components/SettingsView.svelte';
   import UnlockScreen from './lib/components/UnlockScreen.svelte';
   import Button from './lib/components/ui/Button.svelte';
@@ -34,6 +35,7 @@
   const navigation = [
     { id: 'gallery' as const, label: 'Gallery', icon: Images },
     { id: 'passwords' as const, label: 'Passwords', icon: KeyRound },
+    { id: 'projects' as const, label: 'Projects', icon: FolderOpen },
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
@@ -220,6 +222,8 @@
         <GalleryView />
       {:else if view === 'passwords'}
         <PasswordView />
+      {:else if view === 'projects'}
+        <ProjectView />
       {:else}
         <SettingsView {status} onStatus={applyStatus} />
       {/if}

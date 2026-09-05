@@ -7,6 +7,8 @@ mod gallery;
 mod health;
 mod media_server;
 mod paths;
+mod project_commands;
+mod projects;
 mod protocol;
 mod session;
 mod source;
@@ -24,6 +26,7 @@ use crate::{
     gallery::{prepare_trash_recovery, GalleryRepository, GalleryTrash},
     media_server::MediaServer,
     paths::VaultPaths,
+    projects::ProjectRepository,
     session::SessionState,
     state::AppState,
 };
@@ -98,8 +101,10 @@ pub fn run() {
                 paths.gallery_thumbnails.clone(),
             )?);
             let credentials = Arc::new(CredentialRepository::new(paths.credentials_db.clone())?);
+            let projects = Arc::new(ProjectRepository::new(paths.projects_db.clone())?);
             let media_server = Arc::new(MediaServer::start(Arc::clone(&session), Arc::clone(&gallery))?);
-            let state = AppState::new(paths, session, gallery, gallery_trash, credentials, media_server);
+            let state =
+                AppState::new(paths, session, gallery, gallery_trash, credentials, projects, media_server);
 
             if protocol_setup_state.set(state.clone()).is_err() {
                 return Err(std::io::Error::new(
@@ -147,6 +152,14 @@ pub fn run() {
             commands::generate_password,
             commands::generate_password_advanced,
             commands::credential_totp,
+            project_commands::inspect_project,
+            project_commands::project_list,
+            project_commands::register_project,
+            project_commands::sync_project,
+            project_commands::delete_project,
+            project_commands::project_environment_status,
+            project_commands::import_project_env,
+            project_commands::run_project_command,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run ND Secure");

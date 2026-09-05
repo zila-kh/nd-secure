@@ -10,6 +10,7 @@ use crate::{
     gallery::{GalleryRepository, GalleryTrash},
     media_server::MediaServer,
     paths::VaultPaths,
+    projects::ProjectRepository,
     session::SessionState,
 };
 
@@ -64,6 +65,7 @@ pub struct AppState {
     pub gallery: Arc<GalleryRepository>,
     pub gallery_trash: Arc<GalleryTrash>,
     pub credentials: Arc<CredentialRepository>,
+    pub projects: Arc<ProjectRepository>,
     pub media_server: Arc<MediaServer>,
     pub clipboard: Arc<ClipboardTracker>,
     protocol_active: Arc<AtomicUsize>,
@@ -77,6 +79,7 @@ impl AppState {
         gallery: Arc<GalleryRepository>,
         gallery_trash: Arc<GalleryTrash>,
         credentials: Arc<CredentialRepository>,
+        projects: Arc<ProjectRepository>,
         media_server: Arc<MediaServer>,
     ) -> Self {
         Self {
@@ -85,6 +88,7 @@ impl AppState {
             gallery,
             gallery_trash,
             credentials,
+            projects,
             media_server,
             clipboard: Arc::new(ClipboardTracker::new()),
             protocol_active: Arc::new(AtomicUsize::new(0)),
