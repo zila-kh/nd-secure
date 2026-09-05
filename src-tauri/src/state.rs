@@ -24,7 +24,11 @@ pub struct ClipboardTracker {
 
 impl ClipboardTracker {
     fn new() -> Self {
-        Self { next_generation: AtomicU64::new(0), tracked: Mutex::new(None), operation: Mutex::new(()) }
+        Self {
+            next_generation: AtomicU64::new(0),
+            tracked: Mutex::new(None),
+            operation: Mutex::new(()),
+        }
     }
 
     pub fn with_operation<T>(&self, operation: impl FnOnce() -> T) -> T {
@@ -33,17 +37,24 @@ impl ClipboardTracker {
     }
 
     pub fn track(&self, digest: [u8; 32]) -> u64 {
-        let generation = self.next_generation.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        let generation = self
+            .next_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
         *self.tracked.lock() = Some(TrackedClipboard { generation, digest });
         generation
     }
 
     pub fn current(&self) -> Option<(u64, [u8; 32])> {
-        self.tracked.lock().map(|tracked| (tracked.generation, tracked.digest))
+        self.tracked
+            .lock()
+            .map(|tracked| (tracked.generation, tracked.digest))
     }
 
     pub fn is_current(&self, generation: u64) -> bool {
-        self.tracked.lock().is_some_and(|tracked| tracked.generation == generation)
+        self.tracked
+            .lock()
+            .is_some_and(|tracked| tracked.generation == generation)
     }
 
     pub fn clear_if_generation(&self, generation: u64) {
@@ -97,7 +108,9 @@ impl AppState {
                 .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                return Some(ProtocolPermit { active: Arc::clone(&self.protocol_active) });
+                return Some(ProtocolPermit {
+                    active: Arc::clone(&self.protocol_active),
+                });
             }
         }
     }
