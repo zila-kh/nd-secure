@@ -25,51 +25,50 @@ impl CredentialRepository {
             return page_for_state(&connection, root_key, cursor.as_ref(), limit, 1);
         }
 
-        let mut statement = connection.prepare(
-            "SELECT id, record_type, record_salt, nonce, ciphertext, format_version,
-                    revision, created_at, updated_at
-             FROM credential_records WHERE state = 1",
-        )?;
-        let rows = statement.query_map([], map_encrypted_row)?;
-        let mut summaries = Vec::new();
-        for row in rows {
-            let detail = decrypt_row(root_key, &row?)?;
-            let matches_search = query.is_empty()
-                || detail.title.to_lowercase().contains(&query)
-                || detail.folder.as_deref().is_some_and(|value| value.to_lowercase().contains(&query))
-                || detail.project.as_deref().is_some_and(|value| value.to_lowercase().contains(&query))
-                || detail.environment.as_deref().is_some_and(|value| value.to_lowercase().contains(&query))
-                || detail.username.as_deref().is_some_and(|value| value.to_lowercase().contains(&query))
-                || detail.websites.iter().any(|value| value.to_lowercase().contains(&query))
-                || detail.custom_fields.iter().any(|field| {
-                    field.name.to_lowercase().contains(&query)
-                        || (!field.hidden && field.value.to_lowercase().contains(&query))
-                });
-            let matches_project = match project_filter {
-                Some("__central__") => detail.scope == CredentialScope::Central,
-                Some("__project__") => detail.scope == CredentialScope::Project,
-                Some(project) => detail.scope == CredentialScope::Project
-                    && detail.project.as_deref().is_some_and(|value| value.eq_ignore_ascii_case(project)),
-                None => true,
-            };
-            let matches_environment = environment_filter
-                .map(|environment| {
-                    detail.environment.as_deref().is_some_and(|value| value.eq_ignore_ascii_case(environment))
-                })
-                .unwrap_or(true);
-            if matches_search && matches_project && matches_environment {
-                summaries.push(summary_from_detail(detail));
+        let requested = limit.saturating_add(1);
+        let mut summaries = Vec::with_capacity(requested);
+        if let Some(cursor) = cursor.as_ref() {
+            let mut statement = connection.prepare_cached(
+                "SELECT id, record_type, record_salt, nonce, ciphertext, format_version,
+                        revision, created_at, updated_at
+                 FROM credential_records
+                 WHERE state = 1
+                   AND (updated_at < ?1 OR (updated_at = ?1 AND id < ?2))
+                 ORDER BY updated_at DESC, id DESC",
+            )?;
+            let rows = statement.query_map(
+                params![cursor.updated_at, cursor.id.as_str()],
+                map_encrypted_row,
+            )?;
+            for row in rows {
+                let detail = decrypt_row(root_key, &row?)?;
+                if credential_matches_filters(&detail, &query, project_filter, environment_filter) {
+                    summaries.push(summary_from_detail(detail));
+                    if summaries.len() >= requested {
+                        break;
+                    }
+                }
+            }
+        } else {
+            let mut statement = connection.prepare_cached(
+                "SELECT id, record_type, record_salt, nonce, ciphertext, format_version,
+                        revision, created_at, updated_at
+                 FROM credential_records
+                 WHERE state = 1
+                 ORDER BY updated_at DESC, id DESC",
+            )?;
+            let rows = statement.query_map([], map_encrypted_row)?;
+            for row in rows {
+                let detail = decrypt_row(root_key, &row?)?;
+                if credential_matches_filters(&detail, &query, project_filter, environment_filter) {
+                    summaries.push(summary_from_detail(detail));
+                    if summaries.len() >= requested {
+                        break;
+                    }
+                }
             }
         }
-        summaries.sort_by(|left, right| {
-            right.updated_at.cmp(&left.updated_at).then_with(|| right.id.cmp(&left.id))
-        });
-        if let Some(cursor) = cursor {
-            summaries.retain(|item| {
-                item.updated_at < cursor.updated_at
-                    || (item.updated_at == cursor.updated_at && item.id < cursor.id)
-            });
-        }
+
         let has_more = summaries.len() > limit;
         summaries.truncate(limit);
         page_from_summaries(summaries, has_more)
@@ -250,6 +249,39 @@ impl CredentialRepository {
     }
 }
 
+fn credential_matches_filters(
+    detail: &CredentialDetail,
+    query: &str,
+    project_filter: Option<&str>,
+    environment_filter: Option<&str>,
+) -> bool {
+    let matches_search = query.is_empty()
+        || detail.title.to_lowercase().contains(query)
+        || detail.folder.as_deref().is_some_and(|value| value.to_lowercase().contains(query))
+        || detail.project.as_deref().is_some_and(|value| value.to_lowercase().contains(query))
+        || detail.environment.as_deref().is_some_and(|value| value.to_lowercase().contains(query))
+        || detail.username.as_deref().is_some_and(|value| value.to_lowercase().contains(query))
+        || detail.websites.iter().any(|value| value.to_lowercase().contains(query))
+        || detail.custom_fields.iter().any(|field| {
+            field.name.to_lowercase().contains(query)
+                || (!field.hidden && field.value.to_lowercase().contains(query))
+        });
+    let matches_project = match project_filter {
+        Some("__central__") => detail.scope == CredentialScope::Central,
+        Some("__project__") => detail.scope == CredentialScope::Project,
+        Some(project) => detail.scope == CredentialScope::Project
+            && detail.project.as_deref().is_some_and(|value| value.eq_ignore_ascii_case(project)),
+        None => true,
+    };
+    let matches_environment = environment_filter
+        .map(|environment| {
+            detail.environment.as_deref().is_some_and(|value| value.eq_ignore_ascii_case(environment))
+        })
+        .unwrap_or(true);
+
+    matches_search && matches_project && matches_environment
+}
+
 fn page_for_state(
     connection: &Connection,
     root_key: &[u8; 32],
@@ -293,6 +325,110 @@ fn page_for_state(
     let has_more = summaries.len() > limit;
     summaries.truncate(limit);
     page_from_summaries(summaries, has_more)
+}
+
+#[cfg(test)]
+mod filtered_page_tests {
+    use super::*;
+
+    fn input(index: usize, matches: bool) -> CredentialInput {
+        CredentialInput {
+            id: None,
+            record_type: CredentialType::Login,
+            title: if matches {
+                format!("Deploy target {index}")
+            } else {
+                format!("Unrelated account {index}")
+            },
+            scope: CredentialScope::Project,
+            project: Some(if matches { "nd-secure" } else { "other" }.into()),
+            environment: Some(if index % 2 == 0 { "prod" } else { "dev" }.into()),
+            folder: Some("Infrastructure".into()),
+            username: Some(format!("person-{index}@example.com")),
+            password: Some("correct-horse-battery-staple".into()),
+            secret_value: None,
+            websites: vec!["https://example.com".into()],
+            notes: None,
+            totp_secret: None,
+            custom_fields: Vec::new(),
+            favorite: false,
+        }
+    }
+
+    fn collect_filtered_ids(
+        repository: &CredentialRepository,
+        key: &[u8; 32],
+        page_size: u32,
+        search: &str,
+        project: Option<&str>,
+        environment: Option<&str>,
+    ) -> Vec<String> {
+        let mut cursor = None;
+        let mut ids = Vec::new();
+        loop {
+            let page = repository
+                .page(key, cursor.as_deref(), page_size, search, project, environment)
+                .unwrap();
+            ids.extend(page.items.into_iter().map(|item| item.id));
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        ids
+    }
+
+    #[test]
+    fn filtered_cursor_pages_match_single_large_page_without_duplicates() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = CredentialRepository::new(directory.path().join("credentials.sqlite3")).unwrap();
+        let key = [31_u8; 32];
+        for index in 0..12 {
+            repository.save(&key, input(index, index % 3 != 0)).unwrap();
+        }
+
+        let expected = repository
+            .page(&key, None, 100, "deploy", Some("nd-secure"), None)
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>();
+        let actual = collect_filtered_ids(&repository, &key, 2, "deploy", Some("nd-secure"), None);
+
+        assert_eq!(actual, expected);
+        let unique = actual.iter().collect::<std::collections::HashSet<_>>();
+        assert_eq!(unique.len(), actual.len());
+    }
+
+    #[test]
+    fn environment_filter_pages_preserve_index_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = CredentialRepository::new(directory.path().join("credentials.sqlite3")).unwrap();
+        let key = [37_u8; 32];
+        for index in 0..10 {
+            repository.save(&key, input(index, true)).unwrap();
+        }
+
+        let expected = repository
+            .page(&key, None, 100, "", Some("__project__"), Some("prod"))
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>();
+        let actual = collect_filtered_ids(
+            &repository,
+            &key,
+            2,
+            "",
+            Some("__project__"),
+            Some("prod"),
+        );
+
+        assert_eq!(actual, expected);
+        assert_eq!(actual.len(), 5);
+    }
 }
 
 #[cfg(test)]
