@@ -30,6 +30,26 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+  rust-format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install Rust formatter
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+      - name: Check Rust formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo fmt --manifest-path plugins/tauri-plugin-vault-source/Cargo.toml --all -- --check
+
   rust:
     strategy:
       fail-fast: false
@@ -56,13 +76,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
             libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget xdg-utils
-      - name: Check Rust formatting
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-          cargo fmt --manifest-path plugins/tauri-plugin-vault-source/Cargo.toml --all -- --check
       - name: Lint Rust
         if: runner.os == 'Linux'
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings

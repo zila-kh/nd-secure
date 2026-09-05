@@ -16,6 +16,24 @@ export interface RecoveryKey {
   recoveryKey: string;
 }
 
+export interface VaultHealthIssue {
+  area: string;
+  id?: string | null;
+  message: string;
+}
+
+export interface VaultHealthReport {
+  healthy: boolean;
+  checkedAt: number;
+  galleryItems: number;
+  galleryTrashItems: number;
+  credentialItems: number;
+  credentialTrashItems: number;
+  verifiedMediaBytes: number;
+  totalIssues: number;
+  issues: VaultHealthIssue[];
+}
+
 export interface GalleryItem {
   id: string;
   mimeType: 'image/jpeg' | 'image/png' | 'video/mp4' | 'video/webm';
@@ -29,6 +47,15 @@ export interface GalleryItem {
 
 export interface GalleryPage {
   items: GalleryItem[];
+  nextCursor?: string | null;
+}
+
+export interface GalleryTrashItem extends GalleryItem {
+  deletedAt: number;
+}
+
+export interface GalleryTrashPage {
+  items: GalleryTrashItem[];
   nextCursor?: string | null;
 }
 

@@ -11,6 +11,7 @@
   let height = 500;
   let scrollTop = 0;
   let observer: ResizeObserver | undefined;
+  let scrollFrame: number | undefined;
   let lastRequestedLength = -1;
 
   const rowHeight = 86;
@@ -32,7 +33,11 @@
   }
 
   function onScroll() {
-    scrollTop = viewport.scrollTop;
+    if (scrollFrame !== undefined) return;
+    scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = undefined;
+      if (viewport) scrollTop = viewport.scrollTop;
+    });
   }
 
   function scopeLabel(item: CredentialSummary) {
@@ -50,7 +55,10 @@
     measure();
   });
 
-  onDestroy(() => observer?.disconnect());
+  onDestroy(() => {
+    observer?.disconnect();
+    if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);
+  });
 </script>
 
 <div bind:this={viewport} on:scroll={onScroll} class="relative h-full min-h-[300px] overflow-auto rounded-xl border border-border bg-card" aria-label="Encrypted credential items">

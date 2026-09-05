@@ -16,7 +16,8 @@ use crate::{
     },
     crypto::{CREDENTIALS_DOMAIN, GALLERY_DOMAIN},
     error::{Result, VaultError},
-    gallery::GalleryPage,
+    gallery::{GalleryPage, GalleryTrashPage},
+    health::{self, VaultHealthReport},
     session::{RecoveryKey, SessionStatus},
     source,
     state::AppState,
@@ -204,6 +205,27 @@ pub async fn set_security_preferences(
 }
 
 #[tauri::command]
+pub async fn vault_health_check(state: State<'_, AppState>) -> CommandResult<VaultHealthReport> {
+    let gallery_key = state.session.domain_key(GALLERY_DOMAIN).map_err(public_error)?;
+    let credential_key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
+    let paths = state.paths.clone();
+    let gallery = Arc::clone(&state.gallery);
+    let gallery_trash = Arc::clone(&state.gallery_trash);
+    let credentials = Arc::clone(&state.credentials);
+    blocking(move || {
+        health::check_vault(
+            &paths,
+            gallery.as_ref(),
+            gallery_trash.as_ref(),
+            credentials.as_ref(),
+            &gallery_key,
+            &credential_key,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn gallery_page(
     state: State<'_, AppState>,
     cursor: Option<String>,
@@ -212,6 +234,17 @@ pub async fn gallery_page(
     state.session.touch().map_err(public_error)?;
     let repository = Arc::clone(&state.gallery);
     blocking(move || repository.page(cursor.as_deref(), limit)).await
+}
+
+#[tauri::command]
+pub async fn gallery_trash_page(
+    state: State<'_, AppState>,
+    cursor: Option<String>,
+    limit: u32,
+) -> CommandResult<GalleryTrashPage> {
+    let key = state.session.domain_key(GALLERY_DOMAIN).map_err(public_error)?;
+    let trash = Arc::clone(&state.gallery_trash);
+    blocking(move || trash.page(&key, cursor.as_deref(), limit)).await
 }
 
 #[tauri::command]
@@ -259,9 +292,33 @@ pub async fn import_media(
 pub async fn delete_media(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     state.session.touch().map_err(public_error)?;
     let id = canonical_uuid(&id).map_err(public_error)?;
+    let key = state.session.domain_key(GALLERY_DOMAIN).map_err(public_error)?;
     state.media_server.revoke_media(id);
-    let repository = Arc::clone(&state.gallery);
-    blocking(move || repository.delete(id)).await
+    let trash = Arc::clone(&state.gallery_trash);
+    blocking(move || trash.delete(&key, id)).await
+}
+
+#[tauri::command]
+pub async fn restore_media(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    let id = canonical_uuid(&id).map_err(public_error)?;
+    let key = state.session.domain_key(GALLERY_DOMAIN).map_err(public_error)?;
+    let trash = Arc::clone(&state.gallery_trash);
+    blocking(move || trash.restore(&key, id)).await
+}
+
+#[tauri::command]
+pub async fn purge_media(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    state.session.require_recent_reauthentication().map_err(public_error)?;
+    let id = canonical_uuid(&id).map_err(public_error)?;
+    let trash = Arc::clone(&state.gallery_trash);
+    blocking(move || trash.purge(id)).await
+}
+
+#[tauri::command]
+pub async fn empty_media_trash(state: State<'_, AppState>) -> CommandResult<usize> {
+    state.session.require_recent_reauthentication().map_err(public_error)?;
+    let trash = Arc::clone(&state.gallery_trash);
+    blocking(move || trash.empty()).await
 }
 
 #[tauri::command]

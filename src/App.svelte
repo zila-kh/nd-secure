@@ -26,6 +26,7 @@
   let loading = true;
   let busy = false;
   let error = '';
+  let statusGeneration = 0;
   let statusTimer: ReturnType<typeof setInterval> | undefined;
   let lastActivityHeartbeat = 0;
   let activityHeartbeatPending = false;
@@ -36,52 +37,71 @@
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
+  function applyStatus(next: SessionStatus) {
+    statusGeneration += 1;
+    status = next;
+  }
+
   async function refreshStatus() {
+    const generation = statusGeneration;
     try {
-      status = await vaultApi.status();
-      if (status.locked) view = 'gallery';
+      const next = await vaultApi.status();
+      if (generation !== statusGeneration) return;
+      status = next;
+      if (next.locked) view = 'gallery';
       error = '';
     } catch (cause) {
-      error = String(cause);
+      if (generation === statusGeneration) error = String(cause);
     } finally {
       loading = false;
     }
   }
 
   async function submitPassword(password: string) {
+    const generation = ++statusGeneration;
     busy = true;
     error = '';
     try {
-      status = status.initialized
+      const next = status.initialized
         ? await vaultApi.unlock(password)
         : await vaultApi.initialize(password, status.autoLockSeconds);
-      lastActivityHeartbeat = performance.now();
+      if (generation === statusGeneration) {
+        status = next;
+        lastActivityHeartbeat = performance.now();
+      }
     } catch (cause) {
-      error = String(cause);
+      if (generation === statusGeneration) error = String(cause);
     } finally {
-      busy = false;
+      if (generation === statusGeneration) busy = false;
     }
   }
 
   async function recoverVault(recoveryKey: string, newPassword: string) {
+    const generation = ++statusGeneration;
     busy = true;
     error = '';
     try {
-      status = await vaultApi.recover(recoveryKey, newPassword);
-      lastActivityHeartbeat = performance.now();
+      const next = await vaultApi.recover(recoveryKey, newPassword);
+      if (generation === statusGeneration) {
+        status = next;
+        lastActivityHeartbeat = performance.now();
+      }
     } catch (cause) {
-      error = String(cause);
+      if (generation === statusGeneration) error = String(cause);
     } finally {
-      busy = false;
+      if (generation === statusGeneration) busy = false;
     }
   }
 
   async function lock() {
+    const generation = ++statusGeneration;
     try {
-      status = await vaultApi.lock();
+      const next = await vaultApi.lock();
+      if (generation !== statusGeneration) return;
+      status = next;
       view = 'gallery';
     } catch (cause) {
-      error = String(cause);
+      if (generation === statusGeneration) error = String(cause);
     }
   }
 
@@ -111,10 +131,21 @@
     }
   }
 
+  function handleKeydown(event: KeyboardEvent) {
+    const quickLock = event.shiftKey
+      && (event.metaKey || event.ctrlKey)
+      && !event.altKey
+      && event.key.toLowerCase() === 'l';
+    if (!quickLock || status.locked || event.repeat) return;
+    event.preventDefault();
+    void lock();
+  }
+
   onMount(() => {
     void refreshStatus();
     statusTimer = setInterval(refreshStatus, 5000);
     document.addEventListener('visibilitychange', visibilityChanged);
+    window.addEventListener('keydown', handleKeydown);
     document.addEventListener('keydown', recordUserActivity);
     document.addEventListener('input', recordUserActivity);
     document.addEventListener('pointerdown', recordUserActivity, { passive: true });
@@ -126,6 +157,7 @@
   onDestroy(() => {
     if (statusTimer) clearInterval(statusTimer);
     document.removeEventListener('visibilitychange', visibilityChanged);
+    window.removeEventListener('keydown', handleKeydown);
     document.removeEventListener('keydown', recordUserActivity);
     document.removeEventListener('input', recordUserActivity);
     document.removeEventListener('pointerdown', recordUserActivity);
@@ -174,7 +206,12 @@
       </nav>
 
       <div class="mt-auto">
-        <Button variant="secondary" className="w-full" on:click={lock}><Lock size={17} /> Lock vault</Button>
+        <Button
+          variant="secondary"
+          className="w-full"
+          on:click={lock}
+          title="Quick lock: Ctrl/Cmd + Shift + L"
+        ><Lock size={17} /> Lock vault</Button>
       </div>
     </aside>
 
@@ -184,7 +221,7 @@
       {:else if view === 'passwords'}
         <PasswordView />
       {:else}
-        <SettingsView {status} onStatus={(next) => (status = next)} />
+        <SettingsView {status} onStatus={applyStatus} />
       {/if}
     </main>
 

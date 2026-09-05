@@ -6,7 +6,10 @@ use std::sync::{
 use parking_lot::Mutex;
 
 use crate::{
-    credentials::CredentialRepository, gallery::GalleryRepository, media_server::MediaServer,
+    credentials::CredentialRepository,
+    gallery::{GalleryRepository, GalleryTrash},
+    media_server::MediaServer,
+    paths::VaultPaths,
     session::SessionState,
 };
 
@@ -56,8 +59,10 @@ impl ClipboardTracker {
 
 #[derive(Clone)]
 pub struct AppState {
+    pub paths: VaultPaths,
     pub session: Arc<SessionState>,
     pub gallery: Arc<GalleryRepository>,
+    pub gallery_trash: Arc<GalleryTrash>,
     pub credentials: Arc<CredentialRepository>,
     pub media_server: Arc<MediaServer>,
     pub clipboard: Arc<ClipboardTracker>,
@@ -67,14 +72,18 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(
+        paths: VaultPaths,
         session: Arc<SessionState>,
         gallery: Arc<GalleryRepository>,
+        gallery_trash: Arc<GalleryTrash>,
         credentials: Arc<CredentialRepository>,
         media_server: Arc<MediaServer>,
     ) -> Self {
         Self {
+            paths,
             session,
             gallery,
+            gallery_trash,
             credentials,
             media_server,
             clipboard: Arc::new(ClipboardTracker::new()),
