@@ -32,6 +32,15 @@ export interface GalleryPage {
   nextCursor?: string | null;
 }
 
+export interface GalleryTrashItem extends GalleryItem {
+  deletedAt: number;
+}
+
+export interface GalleryTrashPage {
+  items: GalleryTrashItem[];
+  nextCursor?: string | null;
+}
+
 export interface ImportMediaItemResult {
   sourceIndex: number;
   id?: string | null;
