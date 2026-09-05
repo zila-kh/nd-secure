@@ -15,7 +15,8 @@ use super::{
         detect_plaintext_env_files, merge_env_example, parse_env_file_values, resolve_plaintext_env_file,
         validate_env_file_environment, validate_registered_environment,
     },
-    ProjectCommandResult, ProjectEnvImportResult, ProjectEnvironmentStatus, ProjectRepository,
+    ProjectCommandRequest, ProjectCommandResult, ProjectEnvImportResult, ProjectEnvironmentStatus,
+    ProjectRepository,
 };
 
 const MAX_PROGRAM_BYTES: usize = 4096;
@@ -142,27 +143,16 @@ impl ProjectRepository {
         })
     }
 
-    pub fn run_command(
+    pub(crate) fn run_command(
         &self,
         project_root_key: &[u8; 32],
         credential_repository: &CredentialRepository,
         credential_root_key: &[u8; 32],
-        id: Uuid,
-        environment: &str,
-        program: &str,
-        args: Vec<String>,
+        request: ProjectCommandRequest,
     ) -> Result<ProjectCommandResult> {
         #[cfg(any(target_os = "android", target_os = "ios"))]
         {
-            let _ = (
-                project_root_key,
-                credential_repository,
-                credential_root_key,
-                id,
-                environment,
-                program,
-                args,
-            );
+            let _ = (project_root_key, credential_repository, credential_root_key, request);
             return Err(VaultError::Platform(
                 "project command execution is only available on desktop".into(),
             ));
@@ -170,13 +160,13 @@ impl ProjectRepository {
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
-            validate_program(program, &args)?;
-            let registration = self.detail(project_root_key, id)?;
-            validate_registered_environment(&registration, environment)?;
+            validate_program(&request.program, &request.args)?;
+            let registration = self.detail(project_root_key, request.id)?;
+            validate_registered_environment(&registration, &request.environment)?;
             let secrets = credential_repository.project_secret_values(
                 credential_root_key,
                 &registration.id,
-                environment,
+                &request.environment,
                 &registration.required_keys,
             )?;
             let missing: Vec<String> = registration
@@ -192,13 +182,13 @@ impl ProjectRepository {
                 )));
             }
 
-            let mut command = Command::new(program);
-            command.current_dir(&registration.root).args(args).env_clear();
+            let mut command = Command::new(&request.program);
+            command.current_dir(&registration.root).args(&request.args).env_clear();
             copy_safe_parent_environment(&mut command);
             command
                 .env("ND_SECURE_PROJECT_ID", &registration.id)
                 .env("ND_SECURE_PROJECT", &registration.name)
-                .env("ND_SECURE_ENVIRONMENT", environment)
+                .env("ND_SECURE_ENVIRONMENT", &request.environment)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
