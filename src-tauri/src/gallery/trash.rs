@@ -97,12 +97,7 @@ impl GalleryTrash {
         Ok(trash)
     }
 
-    pub fn page(
-        &self,
-        root_key: &[u8; 32],
-        cursor: Option<&str>,
-        limit: u32,
-    ) -> Result<GalleryTrashPage> {
+    pub fn page(&self, root_key: &[u8; 32], cursor: Option<&str>, limit: u32) -> Result<GalleryTrashPage> {
         let limit = limit.clamp(1, MAX_TRASH_PAGE) as usize;
         let requested = limit.saturating_add(1);
         let cursor = cursor.map(decode_cursor).transpose()?;
@@ -152,9 +147,7 @@ impl GalleryTrash {
         let next_cursor = if has_more {
             items
                 .last()
-                .map(|item| {
-                    encode_cursor(&TrashCursor { deleted_at: item.deleted_at, id: item.id.clone() })
-                })
+                .map(|item| encode_cursor(&TrashCursor { deleted_at: item.deleted_at, id: item.id.clone() }))
                 .transpose()?
         } else {
             None
@@ -198,13 +191,7 @@ impl GalleryTrash {
             let inserted = connection.execute(
                 "INSERT INTO media_trash (id, nonce, ciphertext, deleted_at, format_version)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    id.to_string(),
-                    nonce.as_slice(),
-                    ciphertext,
-                    deleted_at,
-                    TRASH_SCHEMA_VERSION,
-                ],
+                params![id.to_string(), nonce.as_slice(), ciphertext, deleted_at, TRASH_SCHEMA_VERSION,],
             )?;
             if inserted != 1 {
                 return Err(VaultError::Database("unable to journal gallery trash operation".into()));
@@ -228,10 +215,8 @@ impl GalleryTrash {
         let database_result = (|| -> Result<()> {
             let mut connection = self.connection()?;
             let transaction = connection.transaction()?;
-            let deleted = transaction.execute(
-                "DELETE FROM media_items WHERE id = ?1",
-                params![id.to_string()],
-            )?;
+            let deleted =
+                transaction.execute("DELETE FROM media_items WHERE id = ?1", params![id.to_string()])?;
             if deleted != 1 {
                 return Err(VaultError::NotFound);
             }
@@ -284,10 +269,7 @@ impl GalleryTrash {
             if source != &thumbnail_restoring {
                 ensure_absent(&thumbnail_restoring)?;
                 if let Err(error) = fs::rename(source, &thumbnail_restoring) {
-                    let _ = fs::rename(
-                        &object_restoring,
-                        self.objects_dir.join(format!("{id}.trash")),
-                    );
+                    let _ = fs::rename(&object_restoring, self.objects_dir.join(format!("{id}.trash")));
                     return Err(error.into());
                 }
             }
@@ -319,10 +301,7 @@ impl GalleryTrash {
                     metadata.container_version,
                     metadata.width.map(i64::from),
                     metadata.height.map(i64::from),
-                    metadata
-                        .duration_ms
-                        .map(|value| sqlite_integer(value, "media duration"))
-                        .transpose()?,
+                    metadata.duration_ms.map(|value| sqlite_integer(value, "media duration")).transpose()?,
                     thumbnail_state,
                 ],
             )?;
@@ -344,15 +323,9 @@ impl GalleryTrash {
             Ok(())
         })();
         if let Err(error) = database_result {
-            let _ = fs::rename(
-                &object_restoring,
-                self.objects_dir.join(format!("{id}.trash")),
-            );
+            let _ = fs::rename(&object_restoring, self.objects_dir.join(format!("{id}.trash")));
             if restore_thumbnail {
-                let _ = fs::rename(
-                    &thumbnail_restoring,
-                    self.thumbnails_dir.join(format!("{id}.trash")),
-                );
+                let _ = fs::rename(&thumbnail_restoring, self.thumbnails_dir.join(format!("{id}.trash")));
             }
             return Err(error);
         }
@@ -370,26 +343,14 @@ impl GalleryTrash {
             let connection = self.connection()?;
             let _ = connection.execute("DELETE FROM media_items WHERE id = ?1", params![id.to_string()]);
             if active_object.is_file() {
-                let _ = fs::rename(
-                    &active_object,
-                    self.objects_dir.join(format!("{id}.trash")),
-                );
+                let _ = fs::rename(&active_object, self.objects_dir.join(format!("{id}.trash")));
             } else if object_restoring.is_file() {
-                let _ = fs::rename(
-                    &object_restoring,
-                    self.objects_dir.join(format!("{id}.trash")),
-                );
+                let _ = fs::rename(&object_restoring, self.objects_dir.join(format!("{id}.trash")));
             }
             if active_thumbnail.is_file() {
-                let _ = fs::rename(
-                    &active_thumbnail,
-                    self.thumbnails_dir.join(format!("{id}.trash")),
-                );
+                let _ = fs::rename(&active_thumbnail, self.thumbnails_dir.join(format!("{id}.trash")));
             } else if thumbnail_restoring.is_file() {
-                let _ = fs::rename(
-                    &thumbnail_restoring,
-                    self.thumbnails_dir.join(format!("{id}.trash")),
-                );
+                let _ = fs::rename(&thumbnail_restoring, self.thumbnails_dir.join(format!("{id}.trash")));
             }
             return Err(error);
         }
@@ -460,8 +421,7 @@ impl GalleryTrash {
             return Err(VaultError::AuthenticationFailed);
         }
         let connection = self.connection()?;
-        let deleted =
-            connection.execute("DELETE FROM media_trash WHERE id = ?1", params![id.to_string()])?;
+        let deleted = connection.execute("DELETE FROM media_trash WHERE id = ?1", params![id.to_string()])?;
         if deleted != 1 {
             return Err(VaultError::NotFound);
         }
@@ -486,12 +446,8 @@ impl GalleryTrash {
                     let thumbnail_mime: Option<String> = row.get(11)?;
                     let thumbnail_size: Option<u64> = row.get(12)?;
                     let thumbnail_version: Option<i64> = row.get(13)?;
-                    let thumbnail = match (
-                        thumbnail_name,
-                        thumbnail_mime,
-                        thumbnail_size,
-                        thumbnail_version,
-                    ) {
+                    let thumbnail = match (thumbnail_name, thumbnail_mime, thumbnail_size, thumbnail_version)
+                    {
                         (
                             Some(masked_name),
                             Some(mime_type),
@@ -531,13 +487,7 @@ impl GalleryTrash {
             .query_row(
                 "SELECT nonce, ciphertext, format_version FROM media_trash WHERE id = ?1",
                 params![id.to_string()],
-                |row| {
-                    Ok((
-                        row.get::<_, Vec<u8>>(0)?,
-                        row.get::<_, Vec<u8>>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                },
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, i64>(2)?)),
             )
             .optional()?
             .ok_or(VaultError::NotFound)?;
@@ -668,19 +618,12 @@ fn trash_item(metadata: TrashMetadata, deleted_at: i64) -> Result<GalleryTrashIt
     })
 }
 
-fn encrypt_metadata(
-    root_key: &[u8; 32],
-    id: Uuid,
-    metadata: &TrashMetadata,
-) -> Result<([u8; 12], Vec<u8>)> {
+fn encrypt_metadata(root_key: &[u8; 32], id: Uuid, metadata: &TrashMetadata) -> Result<([u8; 12], Vec<u8>)> {
     let nonce = random_array::<12>();
     let plaintext = Zeroizing::new(serde_json::to_vec(metadata)?);
     let cipher = Aes256Gcm::new_from_slice(root_key).map_err(|_| VaultError::Crypto)?;
     let ciphertext = cipher
-        .encrypt(
-            Nonce::from_slice(&nonce),
-            Payload { msg: plaintext.as_slice(), aad: &trash_aad(id) },
-        )
+        .encrypt(Nonce::from_slice(&nonce), Payload { msg: plaintext.as_slice(), aad: &trash_aad(id) })
         .map_err(|_| VaultError::Crypto)?;
     Ok((nonce, ciphertext))
 }
@@ -697,10 +640,7 @@ fn decrypt_metadata(
     }
     let cipher = Aes256Gcm::new_from_slice(root_key).map_err(|_| VaultError::Crypto)?;
     let plaintext = cipher
-        .decrypt(
-            Nonce::from_slice(nonce),
-            Payload { msg: ciphertext, aad: &trash_aad(parsed) },
-        )
+        .decrypt(Nonce::from_slice(nonce), Payload { msg: ciphertext, aad: &trash_aad(parsed) })
         .map_err(|_| VaultError::AuthenticationFailed)?;
     let plaintext = Zeroizing::new(plaintext);
     serde_json::from_slice(plaintext.as_slice()).map_err(|_| VaultError::AuthenticationFailed)
@@ -718,14 +658,8 @@ fn validate_metadata(metadata: &TrashMetadata, id: Uuid) -> Result<()> {
         || metadata.masked_name != format!("{id}.enc")
         || metadata.container_version != CONTAINER_VERSION
         || metadata.file_size_bytes == 0
-        || !matches!(
-            metadata.mime_type.as_str(),
-            "image/jpeg" | "image/png" | "video/mp4" | "video/webm"
-        )
-        || !matches!(
-            metadata.thumbnail_state,
-            THUMBNAIL_PENDING | THUMBNAIL_READY | THUMBNAIL_UNAVAILABLE
-        )
+        || !matches!(metadata.mime_type.as_str(), "image/jpeg" | "image/png" | "video/mp4" | "video/webm")
+        || !matches!(metadata.thumbnail_state, THUMBNAIL_PENDING | THUMBNAIL_READY | THUMBNAIL_UNAVAILABLE)
     {
         return Err(VaultError::AuthenticationFailed);
     }
@@ -840,8 +774,7 @@ fn unix_timestamp() -> Result<i64> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| VaultError::Storage("system clock is before UNIX epoch".into()))?;
-    i64::try_from(duration.as_secs())
-        .map_err(|_| VaultError::Storage("system clock overflow".into()))
+    i64::try_from(duration.as_secs()).map_err(|_| VaultError::Storage("system clock overflow".into()))
 }
 
 #[cfg(test)]
@@ -906,21 +839,13 @@ mod tests {
     }
 
     fn test_repository(root: &Path) -> GalleryRepository {
-        GalleryRepository::new(
-            root.join("gallery.sqlite3"),
-            root.join("objects"),
-            root.join("thumbnails"),
-        )
-        .unwrap()
+        GalleryRepository::new(root.join("gallery.sqlite3"), root.join("objects"), root.join("thumbnails"))
+            .unwrap()
     }
 
     fn test_trash(root: &Path) -> GalleryTrash {
-        GalleryTrash::new(
-            root.join("gallery.sqlite3"),
-            root.join("objects"),
-            root.join("thumbnails"),
-        )
-        .unwrap()
+        GalleryTrash::new(root.join("gallery.sqlite3"), root.join("objects"), root.join("thumbnails"))
+            .unwrap()
     }
 
     fn import_png(repository: &GalleryRepository, key: &[u8; 32]) -> Uuid {
