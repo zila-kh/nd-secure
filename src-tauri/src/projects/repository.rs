@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -20,8 +20,8 @@ use crate::{
 
 use super::{
     env::{
-        ensure_gitignore, inspect_project_root, validate_environments, validate_project_name,
-        write_project_manifest,
+        ensure_gitignore, inspect_project_root, sanitize_env_example, validate_environments,
+        validate_project_name, write_project_manifest,
     },
     ProjectInspection, ProjectRegistration, FORMAT_VERSION, MAX_ENVIRONMENTS, MAX_KEYS,
     REGISTRY_AAD_PREFIX, REGISTRY_CONTEXT,
@@ -92,9 +92,11 @@ impl ProjectRepository {
             created_at,
             updated_at: now,
         };
+
+        sanitize_env_example(Path::new(&registration.root), &registration.required_keys)?;
+        ensure_gitignore(&registration.root)?;
         self.write_registration(&connection, root_key, &registration, revision)?;
         write_project_manifest(&registration)?;
-        ensure_gitignore(&registration.root)?;
         Ok(registration)
     }
 
@@ -127,6 +129,9 @@ impl ProjectRepository {
         registration.root = inspection.root;
         registration.required_keys = inspection.required_keys;
         registration.updated_at = unix_timestamp()?;
+
+        sanitize_env_example(Path::new(&registration.root), &registration.required_keys)?;
+        ensure_gitignore(&registration.root)?;
         self.write_registration(
             &connection,
             root_key,
@@ -134,7 +139,6 @@ impl ProjectRepository {
             row.revision.saturating_add(1),
         )?;
         write_project_manifest(&registration)?;
-        ensure_gitignore(&registration.root)?;
         Ok(registration)
     }
 
@@ -353,13 +357,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_registry_encrypts_local_path() {
+    fn project_registry_encrypts_local_path_and_sanitizes_example() {
         let directory = tempfile::tempdir().unwrap();
         let project = directory.path().join("todo-project");
         fs::create_dir_all(&project).unwrap();
         fs::write(
             project.join(".env.example"),
-            "DATABASE_URL=\nAPI_TOKEN=\n",
+            "# token=comment-secret\nDATABASE_URL=postgres://secret\nAPI_TOKEN=secret-token\n",
         )
         .unwrap();
         let repository =
@@ -374,6 +378,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(saved.required_keys, vec!["API_TOKEN", "DATABASE_URL"]);
+
+        let example = fs::read_to_string(project.join(".env.example")).unwrap();
+        assert!(example.contains("API_TOKEN=\n"));
+        assert!(example.contains("DATABASE_URL=\n"));
+        assert!(!example.contains("comment-secret"));
+        assert!(!example.contains("postgres://secret"));
+        assert!(!example.contains("secret-token"));
+
         let bytes = fs::read(directory.path().join("projects.sqlite3")).unwrap();
         assert!(!bytes
             .windows(b"todo-project".len())
