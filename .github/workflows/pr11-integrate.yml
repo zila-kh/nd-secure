@@ -43,7 +43,6 @@ jobs:
             fi
           fi
 
-          # Start all shared integration surfaces from hardened main, then layer Projects on top.
           git checkout origin/main -- src-tauri/src/lib.rs src-tauri/src/state.rs src/App.svelte src/lib/api.ts src/lib/types.ts
 
           python3 - <<'PY'
@@ -57,7 +56,6 @@ jobs:
                   raise SystemExit(f'{path}: missing anchor for {label}')
               path.write_text(text.replace(old, new, 1))
 
-          # Rust bootstrap: retain activity/health/trash hardening and add project runtime.
           lib = Path('src-tauri/src/lib.rs')
           replace_once(lib, 'mod paths;\n', 'mod paths;\nmod project_commands;\nmod projects;\n', 'project modules')
           replace_once(
@@ -74,8 +72,8 @@ jobs:
           )
           replace_once(
               lib,
-              '                credentials,\n                media_server,\n',
-              '                credentials,\n                projects,\n                media_server,\n',
+              '            let state = AppState::new(paths, session, gallery, gallery_trash, credentials, media_server);\n',
+              '            let state = AppState::new(\n                paths,\n                session,\n                gallery,\n                gallery_trash,\n                credentials,\n                projects,\n                media_server,\n            );\n',
               'AppState projects argument',
           )
           replace_once(
@@ -85,7 +83,6 @@ jobs:
               'project command registration',
           )
 
-          # App state: keep paths + GalleryTrash and add ProjectRepository.
           state = Path('src-tauri/src/state.rs')
           replace_once(
               state,
@@ -112,7 +109,6 @@ jobs:
               'state constructor projects assignment',
           )
 
-          # Frontend shell: preserve race-safe status/activity handling and add Projects navigation.
           app = Path('src/App.svelte')
           text = app.read_text()
           text = text.replace(
@@ -137,7 +133,6 @@ jobs:
               text = text.replace(anchor, anchor + "      {:else if view === 'projects'}\n        <ProjectView />\n", 1)
           app.write_text(text)
 
-          # API: keep health/trash/activity APIs and append project operations.
           api = Path('src/lib/api.ts')
           text = api.read_text()
           type_anchor = '  PasswordGeneratorOptions,\n'
@@ -156,25 +151,25 @@ jobs:
               anchor = "  totpCode: (id: string) => invoke<TotpCode>('credential_totp', { id })\n"
               if anchor not in text:
                   raise SystemExit('api.ts TOTP anchor missing')
-              project_api = """  totpCode: (id: string) => invoke<TotpCode>('credential_totp', { id }),
-
-  inspectProject: (root: string) => invoke<ProjectInspection>('inspect_project', { root }),
-  projectList: () => invoke<ProjectRegistration[]>('project_list'),
-  registerProject: (root: string, name: string, environments: string[]) =>
-    invoke<ProjectRegistration>('register_project', { root, name, environments }),
-  syncProject: (id: string) => invoke<ProjectRegistration>('sync_project', { id }),
-  deleteProject: (id: string) => invoke<void>('delete_project', { id }),
-  projectEnvironmentStatus: (id: string, environment: string) =>
-    invoke<ProjectEnvironmentStatus>('project_environment_status', { id, environment }),
-  importProjectEnv: (id: string, environment: string, fileName: string) =>
-    invoke<ProjectEnvImportResult>('import_project_env', { id, environment, fileName }),
-  runProjectCommand: (id: string, environment: string, program: string, args: string[]) =>
-    invoke<ProjectCommandResult>('run_project_command', { id, environment, program, args })
-"""
+              project_api = (
+                  "  totpCode: (id: string) => invoke<TotpCode>('credential_totp', { id }),\n"
+                  "\n"
+                  "  inspectProject: (root: string) => invoke<ProjectInspection>('inspect_project', { root }),\n"
+                  "  projectList: () => invoke<ProjectRegistration[]>('project_list'),\n"
+                  "  registerProject: (root: string, name: string, environments: string[]) =>\n"
+                  "    invoke<ProjectRegistration>('register_project', { root, name, environments }),\n"
+                  "  syncProject: (id: string) => invoke<ProjectRegistration>('sync_project', { id }),\n"
+                  "  deleteProject: (id: string) => invoke<void>('delete_project', { id }),\n"
+                  "  projectEnvironmentStatus: (id: string, environment: string) =>\n"
+                  "    invoke<ProjectEnvironmentStatus>('project_environment_status', { id, environment }),\n"
+                  "  importProjectEnv: (id: string, environment: string, fileName: string) =>\n"
+                  "    invoke<ProjectEnvImportResult>('import_project_env', { id, environment, fileName }),\n"
+                  "  runProjectCommand: (id: string, environment: string, program: string, args: string[]) =>\n"
+                  "    invoke<ProjectCommandResult>('run_project_command', { id, environment, program, args })\n"
+              )
               text = text.replace(anchor, project_api, 1)
           api.write_text(text)
 
-          # Shared types: retain health/gallery-trash types and append Projects types.
           types = Path('src/lib/types.ts')
           text = types.read_text()
           text = text.replace(
@@ -183,46 +178,42 @@ jobs:
               1,
           )
           if 'export interface ProjectRegistration' not in text:
-              text = text.rstrip() + """
-
-export interface ProjectRegistration {
-  id: string;
-  name: string;
-  root: string;
-  environments: string[];
-  requiredKeys: string[];
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface ProjectInspection {
-  root: string;
-  suggestedName: string;
-  exampleExists: boolean;
-  requiredKeys: string[];
-  plaintextEnvFiles: string[];
-}
-
-export interface ProjectEnvironmentStatus {
-  projectId: string;
-  environment: string;
-  presentKeys: string[];
-  missingKeys: string[];
-  plaintextEnvFiles: string[];
-}
-
-export interface ProjectEnvImportResult {
-  importedKeys: string[];
-  existingKeys: string[];
-  sourceRemoved: boolean;
-  rotationRecommended: boolean;
-}
-
-export interface ProjectCommandResult {
-  pid: number;
-  injectedKeys: string[];
-}
-"""
+              project_interfaces = (
+                  "\n\nexport interface ProjectRegistration {\n"
+                  "  id: string;\n"
+                  "  name: string;\n"
+                  "  root: string;\n"
+                  "  environments: string[];\n"
+                  "  requiredKeys: string[];\n"
+                  "  createdAt: number;\n"
+                  "  updatedAt: number;\n"
+                  "}\n"
+                  "\nexport interface ProjectInspection {\n"
+                  "  root: string;\n"
+                  "  suggestedName: string;\n"
+                  "  exampleExists: boolean;\n"
+                  "  requiredKeys: string[];\n"
+                  "  plaintextEnvFiles: string[];\n"
+                  "}\n"
+                  "\nexport interface ProjectEnvironmentStatus {\n"
+                  "  projectId: string;\n"
+                  "  environment: string;\n"
+                  "  presentKeys: string[];\n"
+                  "  missingKeys: string[];\n"
+                  "  plaintextEnvFiles: string[];\n"
+                  "}\n"
+                  "\nexport interface ProjectEnvImportResult {\n"
+                  "  importedKeys: string[];\n"
+                  "  existingKeys: string[];\n"
+                  "  sourceRemoved: boolean;\n"
+                  "  rotationRecommended: boolean;\n"
+                  "}\n"
+                  "\nexport interface ProjectCommandResult {\n"
+                  "  pid: number;\n"
+                  "  injectedKeys: string[];\n"
+                  "}\n"
+              )
+              text = text.rstrip() + project_interfaces
           types.write_text(text)
           PY
 
