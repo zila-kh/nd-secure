@@ -10,9 +10,9 @@ use zeroize::Zeroizing;
 use crate::error::{Result, VaultError};
 
 use super::{
-    ProjectInspection, ProjectManifest, ProjectRegistration, GITIGNORE_BEGIN, GITIGNORE_END,
-    MANIFEST_FILE, MANIFEST_VERSION, MAX_ENV_FILE_BYTES, MAX_ENVIRONMENT_BYTES, MAX_ENVIRONMENTS,
-    MAX_KEYS, MAX_KEY_BYTES, MAX_NAME_BYTES,
+    ProjectInspection, ProjectManifest, ProjectRegistration, GITIGNORE_BEGIN, GITIGNORE_END, MANIFEST_FILE,
+    MANIFEST_VERSION, MAX_ENVIRONMENTS, MAX_ENVIRONMENT_BYTES, MAX_ENV_FILE_BYTES, MAX_KEYS, MAX_KEY_BYTES,
+    MAX_NAME_BYTES,
 };
 
 pub(super) fn inspect_project_root(root: &str) -> Result<ProjectInspection> {
@@ -31,11 +31,8 @@ pub(super) fn inspect_project_root(root: &str) -> Result<ProjectInspection> {
         .unwrap_or("project")
         .to_owned();
     let example_path = canonical.join(".env.example");
-    let required_keys = if example_path.is_file() {
-        parse_env_example_keys(&example_path)?
-    } else {
-        Vec::new()
-    };
+    let required_keys =
+        if example_path.is_file() { parse_env_example_keys(&example_path)? } else { Vec::new() };
     Ok(ProjectInspection {
         root: canonical_string,
         suggested_name,
@@ -70,24 +67,46 @@ pub(super) fn ensure_gitignore(root: &str) -> Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error.into()),
     };
-    if existing.contains(GITIGNORE_BEGIN) && existing.contains(GITIGNORE_END) {
-        return Ok(());
-    }
-    let mut updated = existing;
-    if !updated.is_empty() && !updated.ends_with('\n') {
-        updated.push('\n');
-    }
-    if !updated.is_empty() {
-        updated.push('\n');
-    }
-    updated.push_str(GITIGNORE_BEGIN);
-    updated.push('\n');
-    updated.push_str(
-        ".env\n.env.*\n!.env.example\n!.env.*.example\n!.env.sample\n!.env.*.sample\n!.env.template\n!.env.*.template\n",
+    let managed = format!(
+        "{GITIGNORE_BEGIN}\n.env\n.env.*\n!.env.example\n!.env.*.example\n!.env.sample\n!.env.*.sample\n!.env.template\n!.env.*.template\n{GITIGNORE_END}\n"
     );
-    updated.push_str(GITIGNORE_END);
-    updated.push('\n');
-    fs::write(path, updated)?;
+    let begin = existing.find(GITIGNORE_BEGIN);
+    let end = existing.find(GITIGNORE_END);
+    let updated = match (begin, end) {
+        (Some(begin), Some(end)) if begin < end => {
+            let suffix_start = end + GITIGNORE_END.len();
+            let mut output = String::with_capacity(existing.len().saturating_add(managed.len()));
+            output.push_str(&existing[..begin]);
+            output.push_str(&managed);
+            let suffix = existing[suffix_start..].trim_start_matches(['\r', '\n']);
+            if !suffix.is_empty() {
+                output.push_str(suffix);
+                if !output.ends_with('\n') {
+                    output.push('\n');
+                }
+            }
+            output
+        }
+        (None, None) => {
+            let mut output = existing;
+            if !output.is_empty() && !output.ends_with('\n') {
+                output.push('\n');
+            }
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(&managed);
+            output
+        }
+        _ => {
+            return Err(VaultError::InvalidInput(
+                "existing ND Secure .gitignore block is malformed".into(),
+            ));
+        }
+    };
+    if updated != existing {
+        fs::write(path, updated)?;
+    }
     Ok(())
 }
 
@@ -131,6 +150,31 @@ pub(super) fn resolve_plaintext_env_file(root: &str, file_name: &str) -> Result<
     Ok(canonical)
 }
 
+pub(super) fn validate_env_file_environment(
+    registration: &ProjectRegistration,
+    file_name: &str,
+    environment: &str,
+) -> Result<()> {
+    if file_name == ".env" {
+        return Ok(());
+    }
+    let Some(suffix) = file_name.strip_prefix(".env.") else {
+        return Ok(());
+    };
+    let matched = registration
+        .environments
+        .iter()
+        .find(|candidate| suffix == candidate.as_str() || suffix.starts_with(&format!("{candidate}.")));
+    if let Some(matched) = matched {
+        if matched != environment {
+            return Err(VaultError::InvalidInput(format!(
+                "{file_name} appears to belong to environment {matched}, not {environment}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn parse_env_file_values(path: &Path) -> Result<BTreeMap<String, Zeroizing<String>>> {
     let metadata = fs::metadata(path)?;
     if metadata.len() > MAX_ENV_FILE_BYTES {
@@ -167,16 +211,9 @@ pub(super) fn merge_env_example(root: &Path, keys: &[String]) -> Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error.into()),
     };
-    let existing_keys: BTreeSet<String> = if path.is_file() {
-        parse_env_example_keys(&path)?.into_iter().collect()
-    } else {
-        BTreeSet::new()
-    };
-    let mut missing: Vec<String> = keys
-        .iter()
-        .filter(|key| !existing_keys.contains(*key))
-        .cloned()
-        .collect();
+    let existing_keys: BTreeSet<String> =
+        if path.is_file() { parse_env_example_keys(&path)?.into_iter().collect() } else { BTreeSet::new() };
+    let mut missing: Vec<String> = keys.iter().filter(|key| !existing_keys.contains(*key)).cloned().collect();
     missing.sort();
     if missing.is_empty() {
         return Ok(());
@@ -303,15 +340,24 @@ fn parse_env_value(raw: &str) -> Result<String> {
         }
         return Ok(output);
     }
-    Ok(value.to_owned())
+    let unquoted = value
+        .char_indices()
+        .find(|(index, character)| {
+            *character == '#'
+                && *index > 0
+                && value[..*index].chars().next_back().is_some_and(char::is_whitespace)
+        })
+        .map(|(index, _)| value[..index].trim_end())
+        .unwrap_or(value);
+    Ok(unquoted.to_owned())
 }
 
 fn validate_environment_name(environment: &str) -> Result<()> {
     if environment.is_empty()
         || environment.len() > MAX_ENVIRONMENT_BYTES
-        || environment.chars().any(|character| {
-            !(character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.'))
-        })
+        || environment
+            .chars()
+            .any(|character| !(character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')))
     {
         return Err(VaultError::InvalidInput("invalid project environment name".into()));
     }
@@ -358,9 +404,29 @@ mod tests {
         fs::write(directory.path().join(".env.prod"), "SECRET=value").unwrap();
         fs::write(directory.path().join(".env.example"), "SECRET=").unwrap();
         fs::write(directory.path().join(".env.prod.example"), "SECRET=").unwrap();
-        assert_eq!(
-            detect_plaintext_env_files(directory.path()).unwrap(),
-            vec![".env", ".env.prod"]
-        );
+        assert_eq!(detect_plaintext_env_files(directory.path()).unwrap(), vec![".env", ".env.prod"]);
+    }
+
+    #[test]
+    fn environment_specific_file_cannot_be_imported_into_another_environment() {
+        let registration = ProjectRegistration {
+            id: Uuid::nil().to_string(),
+            name: "todo".into(),
+            root: "/tmp/todo".into(),
+            environments: vec!["dev".into(), "prod".into()],
+            required_keys: Vec::new(),
+            created_at: 1,
+            updated_at: 1,
+        };
+        assert!(validate_env_file_environment(&registration, ".env.prod", "prod").is_ok());
+        assert!(validate_env_file_environment(&registration, ".env.prod.local", "prod").is_ok());
+        assert!(validate_env_file_environment(&registration, ".env.prod", "dev").is_err());
+        assert!(validate_env_file_environment(&registration, ".env", "dev").is_ok());
+    }
+
+    #[test]
+    fn unquoted_inline_comments_are_not_migrated_as_secret_data() {
+        assert_eq!(parse_env_value("secret-value # developer note").unwrap(), "secret-value");
+        assert_eq!(parse_env_value("value#part").unwrap(), "value#part");
     }
 }
