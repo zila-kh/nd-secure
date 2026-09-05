@@ -10,17 +10,15 @@ use zeroize::Zeroizing;
 use crate::error::{Result, VaultError};
 
 use super::{
-    ProjectInspection, ProjectManifest, ProjectRegistration, GITIGNORE_BEGIN, GITIGNORE_END,
-    MANIFEST_FILE, MANIFEST_VERSION, MAX_ENVIRONMENTS, MAX_ENVIRONMENT_BYTES, MAX_ENV_FILE_BYTES,
-    MAX_KEYS, MAX_KEY_BYTES, MAX_NAME_BYTES,
+    ProjectInspection, ProjectManifest, ProjectRegistration, GITIGNORE_BEGIN, GITIGNORE_END, MANIFEST_FILE,
+    MANIFEST_VERSION, MAX_ENVIRONMENTS, MAX_ENVIRONMENT_BYTES, MAX_ENV_FILE_BYTES, MAX_KEYS, MAX_KEY_BYTES,
+    MAX_NAME_BYTES,
 };
 
 pub(super) fn inspect_project_root(root: &str) -> Result<ProjectInspection> {
     let canonical = fs::canonicalize(root)?;
     if !canonical.is_dir() {
-        return Err(VaultError::InvalidInput(
-            "project root must be a directory".into(),
-        ));
+        return Err(VaultError::InvalidInput("project root must be a directory".into()));
     }
     let canonical_string = canonical
         .to_str()
@@ -33,11 +31,8 @@ pub(super) fn inspect_project_root(root: &str) -> Result<ProjectInspection> {
         .unwrap_or("project")
         .to_owned();
     let example_path = canonical.join(".env.example");
-    let required_keys = if example_path.is_file() {
-        parse_env_example_keys(&example_path)?
-    } else {
-        Vec::new()
-    };
+    let required_keys =
+        if example_path.is_file() { parse_env_example_keys(&example_path)? } else { Vec::new() };
     Ok(ProjectInspection {
         root: canonical_string,
         suggested_name,
@@ -59,11 +54,7 @@ pub(super) fn write_project_manifest(registration: &ProjectRegistration) -> Resu
     };
     let mut bytes = serde_json::to_vec_pretty(&manifest)?;
     bytes.push(b'\n');
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(path)?;
+    let mut file = fs::OpenOptions::new().create(true).truncate(true).write(true).open(path)?;
     file.write_all(&bytes)?;
     file.sync_all()?;
     Ok(())
@@ -80,9 +71,7 @@ pub(super) fn ensure_gitignore(root: &str) -> Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error.into()),
     };
-    let managed = format!(
-        "{GITIGNORE_BEGIN}\n.env\n.env.*\n!.env.example\n{GITIGNORE_END}\n"
-    );
+    let managed = format!("{GITIGNORE_BEGIN}\n.env\n.env.*\n!.env.example\n{GITIGNORE_END}\n");
     let begin = existing.find(GITIGNORE_BEGIN);
     let end = existing.find(GITIGNORE_END);
     let updated = match (begin, end) {
@@ -112,9 +101,7 @@ pub(super) fn ensure_gitignore(root: &str) -> Result<()> {
             output
         }
         _ => {
-            return Err(VaultError::InvalidInput(
-                "existing ND Secure .gitignore block is malformed".into(),
-            ));
+            return Err(VaultError::InvalidInput("existing ND Secure .gitignore block is malformed".into()));
         }
     };
     if updated != existing {
@@ -145,31 +132,20 @@ pub(super) fn detect_plaintext_env_files(root: &Path) -> Result<Vec<String>> {
 pub(super) fn resolve_plaintext_env_file(root: &str, file_name: &str) -> Result<PathBuf> {
     let relative = Path::new(file_name);
     if relative.components().count() != 1
-        || relative
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
+        || relative.components().any(|component| !matches!(component, Component::Normal(_)))
         || !is_plaintext_env_name(file_name)
     {
-        return Err(VaultError::InvalidInput(
-            "invalid plaintext environment file name".into(),
-        ));
+        return Err(VaultError::InvalidInput("invalid plaintext environment file name".into()));
     }
     let root_path = fs::canonicalize(root)?;
     let path = root_path.join(relative);
     let metadata = fs::symlink_metadata(&path)?;
-    if metadata.file_type().is_symlink()
-        || !metadata.is_file()
-        || metadata.len() > MAX_ENV_FILE_BYTES
-    {
-        return Err(VaultError::InvalidInput(
-            "environment file is not a safe regular file".into(),
-        ));
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > MAX_ENV_FILE_BYTES {
+        return Err(VaultError::InvalidInput("environment file is not a safe regular file".into()));
     }
     let canonical = fs::canonicalize(&path)?;
     if canonical.parent() != Some(root_path.as_path()) {
-        return Err(VaultError::InvalidInput(
-            "environment file escapes the project root".into(),
-        ));
+        return Err(VaultError::InvalidInput("environment file escapes the project root".into()));
     }
     Ok(canonical)
 }
@@ -185,9 +161,10 @@ pub(super) fn validate_env_file_environment(
     let Some(suffix) = file_name.strip_prefix(".env.") else {
         return Ok(());
     };
-    let matched = registration.environments.iter().find(|candidate| {
-        suffix == candidate.as_str() || suffix.starts_with(&format!("{candidate}."))
-    });
+    let matched = registration
+        .environments
+        .iter()
+        .find(|candidate| suffix == candidate.as_str() || suffix.starts_with(&format!("{candidate}.")));
     if let Some(matched) = matched {
         if matched != environment {
             return Err(VaultError::InvalidInput(format!(
@@ -198,14 +175,10 @@ pub(super) fn validate_env_file_environment(
     Ok(())
 }
 
-pub(super) fn parse_env_file_values(
-    path: &Path,
-) -> Result<BTreeMap<String, Zeroizing<String>>> {
+pub(super) fn parse_env_file_values(path: &Path) -> Result<BTreeMap<String, Zeroizing<String>>> {
     let metadata = fs::metadata(path)?;
     if metadata.len() > MAX_ENV_FILE_BYTES {
-        return Err(VaultError::InvalidInput(
-            "environment file is too large".into(),
-        ));
+        return Err(VaultError::InvalidInput("environment file is too large".into()));
     }
     let content = Zeroizing::new(fs::read_to_string(path)?);
     let mut values = BTreeMap::new();
@@ -214,38 +187,27 @@ pub(super) fn parse_env_file_values(
             continue;
         };
         if values.contains_key(&key) {
-            return Err(VaultError::InvalidInput(format!(
-                "duplicate environment key: {key}"
-            )));
+            return Err(VaultError::InvalidInput(format!("duplicate environment key: {key}")));
         }
         let value = parse_env_value(raw_value)?;
         if value.is_empty() {
-            return Err(VaultError::InvalidInput(format!(
-                "environment key has an empty value: {key}"
-            )));
+            return Err(VaultError::InvalidInput(format!("environment key has an empty value: {key}")));
         }
         if value.len() > 64 * 1024 {
-            return Err(VaultError::InvalidInput(format!(
-                "environment value is too large: {key}"
-            )));
+            return Err(VaultError::InvalidInput(format!("environment value is too large: {key}")));
         }
         values.insert(key, Zeroizing::new(value));
     }
     if values.len() > MAX_KEYS {
-        return Err(VaultError::InvalidInput(
-            "too many environment keys".into(),
-        ));
+        return Err(VaultError::InvalidInput("too many environment keys".into()));
     }
     Ok(values)
 }
 
 pub(super) fn merge_env_example(root: &Path, keys: &[String]) -> Result<()> {
     let path = root.join(".env.example");
-    let mut all_keys: BTreeSet<String> = if path.is_file() {
-        parse_env_example_keys(&path)?.into_iter().collect()
-    } else {
-        BTreeSet::new()
-    };
+    let mut all_keys: BTreeSet<String> =
+        if path.is_file() { parse_env_example_keys(&path)?.into_iter().collect() } else { BTreeSet::new() };
     for key in keys {
         validate_env_key(key)?;
         all_keys.insert(key.clone());
@@ -264,9 +226,7 @@ pub(super) fn validate_project_name(name: &str) -> Result<String> {
 
 pub(super) fn validate_environments(environments: Vec<String>) -> Result<Vec<String>> {
     if environments.is_empty() || environments.len() > MAX_ENVIRONMENTS {
-        return Err(VaultError::InvalidInput(
-            "project must define 1 to 32 environments".into(),
-        ));
+        return Err(VaultError::InvalidInput("project must define 1 to 32 environments".into()));
     }
     let mut unique = BTreeSet::new();
     for environment in environments {
@@ -282,14 +242,8 @@ pub(super) fn validate_registered_environment(
     environment: &str,
 ) -> Result<()> {
     validate_environment_name(environment)?;
-    if !registration
-        .environments
-        .iter()
-        .any(|value| value == environment)
-    {
-        return Err(VaultError::InvalidInput(
-            "environment is not registered for this project".into(),
-        ));
+    if !registration.environments.iter().any(|value| value == environment) {
+        return Err(VaultError::InvalidInput("environment is not registered for this project".into()));
     }
     Ok(())
 }
@@ -311,18 +265,14 @@ fn parse_env_example_keys(path: &Path) -> Result<Vec<String>> {
         }
     }
     if keys.len() > MAX_KEYS {
-        return Err(VaultError::InvalidInput(
-            "too many environment keys".into(),
-        ));
+        return Err(VaultError::InvalidInput("too many environment keys".into()));
     }
     Ok(keys.into_iter().collect())
 }
 
 fn write_value_free_env_example(path: &Path, keys: &[String]) -> Result<()> {
     if keys.len() > MAX_KEYS {
-        return Err(VaultError::InvalidInput(
-            "too many environment keys".into(),
-        ));
+        return Err(VaultError::InvalidInput("too many environment keys".into()));
     }
     let mut unique = BTreeSet::new();
     for key in keys {
@@ -336,11 +286,7 @@ fn write_value_free_env_example(path: &Path, keys: &[String]) -> Result<()> {
         output.push_str(key);
         output.push_str("=\n");
     }
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(path)?;
+    let mut file = fs::OpenOptions::new().create(true).truncate(true).write(true).open(path)?;
     file.write_all(output.as_bytes())?;
     file.sync_all()?;
     Ok(())
@@ -353,9 +299,7 @@ fn parse_env_assignment(line: &str) -> Result<Option<(String, &str)>> {
     }
     let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
     let Some((key, value)) = line.split_once('=') else {
-        return Err(VaultError::InvalidInput(
-            "environment line is missing '='".into(),
-        ));
+        return Err(VaultError::InvalidInput("environment line is missing '='".into()));
     };
     let key = key.trim();
     validate_env_key(key)?;
@@ -401,10 +345,7 @@ fn parse_env_value(raw: &str) -> Result<String> {
         .find(|(index, character)| {
             *character == '#'
                 && *index > 0
-                && value[..*index]
-                    .chars()
-                    .next_back()
-                    .is_some_and(char::is_whitespace)
+                && value[..*index].chars().next_back().is_some_and(char::is_whitespace)
         })
         .map(|(index, _)| value[..index].trim_end())
         .unwrap_or(value);
@@ -418,9 +359,7 @@ fn validate_environment_name(environment: &str) -> Result<()> {
             .chars()
             .any(|character| !(character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')))
     {
-        return Err(VaultError::InvalidInput(
-            "invalid project environment name".into(),
-        ));
+        return Err(VaultError::InvalidInput("invalid project environment name".into()));
     }
     Ok(())
 }
@@ -436,9 +375,7 @@ fn validate_env_key(key: &str) -> Result<()> {
     if !(first == '_' || first.is_ascii_alphabetic())
         || characters.any(|character| !(character == '_' || character.is_ascii_alphanumeric()))
     {
-        return Err(VaultError::InvalidInput(format!(
-            "invalid environment key: {key}"
-        )));
+        return Err(VaultError::InvalidInput(format!("invalid environment key: {key}")));
     }
     Ok(())
 }
@@ -466,11 +403,7 @@ mod tests {
         fs::write(directory.path().join(".env"), "SECRET=value").unwrap();
         fs::write(directory.path().join(".env.prod"), "SECRET=value").unwrap();
         fs::write(directory.path().join(".env.example"), "SECRET=").unwrap();
-        fs::write(
-            directory.path().join(".env.prod.example"),
-            "SECRET=value",
-        )
-        .unwrap();
+        fs::write(directory.path().join(".env.prod.example"), "SECRET=value").unwrap();
         fs::write(directory.path().join(".env.sample"), "SECRET=value").unwrap();
         assert_eq!(
             detect_plaintext_env_files(directory.path()).unwrap(),
@@ -509,19 +442,14 @@ mod tests {
             updated_at: 1,
         };
         assert!(validate_env_file_environment(&registration, ".env.prod", "prod").is_ok());
-        assert!(
-            validate_env_file_environment(&registration, ".env.prod.local", "prod").is_ok()
-        );
+        assert!(validate_env_file_environment(&registration, ".env.prod.local", "prod").is_ok());
         assert!(validate_env_file_environment(&registration, ".env.prod", "dev").is_err());
         assert!(validate_env_file_environment(&registration, ".env", "dev").is_ok());
     }
 
     #[test]
     fn unquoted_inline_comments_are_not_migrated_as_secret_data() {
-        assert_eq!(
-            parse_env_value("secret-value # developer note").unwrap(),
-            "secret-value"
-        );
+        assert_eq!(parse_env_value("secret-value # developer note").unwrap(), "secret-value");
         assert_eq!(parse_env_value("value#part").unwrap(), "value#part");
     }
 }

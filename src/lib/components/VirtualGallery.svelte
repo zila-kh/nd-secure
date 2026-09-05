@@ -14,6 +14,7 @@
   let scrollTop = 0;
   let failed = new Set<string>();
   let observer: ResizeObserver | undefined;
+  let scrollFrame: number | undefined;
   let lastRequestedLength = -1;
 
   const gap = 12;
@@ -44,7 +45,11 @@
   }
 
   function onScroll() {
-    scrollTop = viewport.scrollTop;
+    if (scrollFrame !== undefined) return;
+    scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = undefined;
+      if (viewport) scrollTop = viewport.scrollTop;
+    });
   }
 
   function markFailed(id: string) {
@@ -66,7 +71,10 @@
     measure();
   });
 
-  onDestroy(() => observer?.disconnect());
+  onDestroy(() => {
+    observer?.disconnect();
+    if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);
+  });
 </script>
 
 <div

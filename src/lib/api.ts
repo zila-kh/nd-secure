@@ -4,6 +4,7 @@ import type {
   CredentialInput,
   CredentialPage,
   GalleryPage,
+  GalleryTrashPage,
   GeneratedPassword,
   ImportMediaResult,
   MediaStreamHandle,
@@ -15,11 +16,13 @@ import type {
   ProjectRegistration,
   RecoveryKey,
   SessionStatus,
-  TotpCode
+  TotpCode,
+  VaultHealthReport
 } from './types';
 
 export const vaultApi = {
   status: () => invoke<SessionStatus>('session_status'),
+  recordActivity: () => invoke<void>('record_user_activity'),
   initialize: (password: string, autoLockSeconds = 300) =>
     invoke<SessionStatus>('initialize_vault', { password, autoLockSeconds }),
   unlock: (password: string) => invoke<SessionStatus>('unlock_vault', { password }),
@@ -45,11 +48,17 @@ export const vaultApi = {
       lockOnSuspend,
       clipboardTimeoutSeconds
     }),
+  healthCheck: () => invoke<VaultHealthReport>('vault_health_check'),
 
   galleryPage: (cursor: string | null = null, limit = 100) =>
     invoke<GalleryPage>('gallery_page', { cursor, limit }),
+  galleryTrashPage: (cursor: string | null = null, limit = 100) =>
+    invoke<GalleryTrashPage>('gallery_trash_page', { cursor, limit }),
   importMedia: (sources: string[]) => invoke<ImportMediaResult>('import_media', { sources }),
   deleteMedia: (id: string) => invoke<void>('delete_media', { id }),
+  restoreMedia: (id: string) => invoke<void>('restore_media', { id }),
+  purgeMedia: (id: string) => invoke<void>('purge_media', { id }),
+  emptyMediaTrash: () => invoke<number>('empty_media_trash'),
   openMediaStream: (id: string) => invoke<MediaStreamHandle>('open_media_stream', { id }),
   closeMediaStream: (token: string) => invoke<void>('close_media_stream', { token }),
 

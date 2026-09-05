@@ -10,6 +10,8 @@
   import Button from './lib/components/ui/Button.svelte';
   import type { SessionStatus, VaultView } from './lib/types';
 
+  const ACTIVITY_HEARTBEAT_MS = 15_000;
+
   let status: SessionStatus = {
     initialized: false,
     locked: true,
@@ -25,7 +27,10 @@
   let loading = true;
   let busy = false;
   let error = '';
+  let statusGeneration = 0;
   let statusTimer: ReturnType<typeof setInterval> | undefined;
+  let lastActivityHeartbeat = 0;
+  let activityHeartbeatPending = false;
 
   const navigation = [
     { id: 'gallery' as const, label: 'Gallery', icon: Images },
@@ -34,50 +39,87 @@
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
+  function applyStatus(next: SessionStatus) {
+    statusGeneration += 1;
+    status = next;
+  }
+
   async function refreshStatus() {
+    const generation = statusGeneration;
     try {
-      status = await vaultApi.status();
+      const next = await vaultApi.status();
+      if (generation !== statusGeneration) return;
+      status = next;
+      if (next.locked) view = 'gallery';
       error = '';
     } catch (cause) {
-      error = String(cause);
+      if (generation === statusGeneration) error = String(cause);
     } finally {
       loading = false;
     }
   }
 
   async function submitPassword(password: string) {
+    const generation = ++statusGeneration;
     busy = true;
     error = '';
     try {
-      status = status.initialized
+      const next = status.initialized
         ? await vaultApi.unlock(password)
         : await vaultApi.initialize(password, status.autoLockSeconds);
+      if (generation === statusGeneration) {
+        status = next;
+        lastActivityHeartbeat = performance.now();
+      }
     } catch (cause) {
-      error = String(cause);
+      if (generation === statusGeneration) error = String(cause);
     } finally {
-      busy = false;
+      if (generation === statusGeneration) busy = false;
     }
   }
 
   async function recoverVault(recoveryKey: string, newPassword: string) {
+    const generation = ++statusGeneration;
     busy = true;
     error = '';
     try {
-      status = await vaultApi.recover(recoveryKey, newPassword);
+      const next = await vaultApi.recover(recoveryKey, newPassword);
+      if (generation === statusGeneration) {
+        status = next;
+        lastActivityHeartbeat = performance.now();
+      }
     } catch (cause) {
-      error = String(cause);
+      if (generation === statusGeneration) error = String(cause);
     } finally {
-      busy = false;
+      if (generation === statusGeneration) busy = false;
     }
   }
 
   async function lock() {
+    const generation = ++statusGeneration;
     try {
-      status = await vaultApi.lock();
+      const next = await vaultApi.lock();
+      if (generation !== statusGeneration) return;
+      status = next;
       view = 'gallery';
     } catch (cause) {
-      error = String(cause);
+      if (generation === statusGeneration) error = String(cause);
     }
+  }
+
+  function recordUserActivity(event: Event) {
+    if (status.locked || !event.isTrusted || activityHeartbeatPending) return;
+
+    const now = performance.now();
+    if (now - lastActivityHeartbeat < ACTIVITY_HEARTBEAT_MS) return;
+    lastActivityHeartbeat = now;
+    activityHeartbeatPending = true;
+    void vaultApi
+      .recordActivity()
+      .catch(() => refreshStatus())
+      .finally(() => {
+        activityHeartbeatPending = false;
+      });
   }
 
   function visibilityChanged() {
@@ -91,15 +133,39 @@
     }
   }
 
+  function handleKeydown(event: KeyboardEvent) {
+    const quickLock = event.shiftKey
+      && (event.metaKey || event.ctrlKey)
+      && !event.altKey
+      && event.key.toLowerCase() === 'l';
+    if (!quickLock || status.locked || event.repeat) return;
+    event.preventDefault();
+    void lock();
+  }
+
   onMount(() => {
     void refreshStatus();
     statusTimer = setInterval(refreshStatus, 5000);
     document.addEventListener('visibilitychange', visibilityChanged);
+    window.addEventListener('keydown', handleKeydown);
+    document.addEventListener('keydown', recordUserActivity);
+    document.addEventListener('input', recordUserActivity);
+    document.addEventListener('pointerdown', recordUserActivity, { passive: true });
+    document.addEventListener('pointermove', recordUserActivity, { passive: true });
+    document.addEventListener('wheel', recordUserActivity, { passive: true });
+    document.addEventListener('touchstart', recordUserActivity, { passive: true });
   });
 
   onDestroy(() => {
     if (statusTimer) clearInterval(statusTimer);
     document.removeEventListener('visibilitychange', visibilityChanged);
+    window.removeEventListener('keydown', handleKeydown);
+    document.removeEventListener('keydown', recordUserActivity);
+    document.removeEventListener('input', recordUserActivity);
+    document.removeEventListener('pointerdown', recordUserActivity);
+    document.removeEventListener('pointermove', recordUserActivity);
+    document.removeEventListener('wheel', recordUserActivity);
+    document.removeEventListener('touchstart', recordUserActivity);
   });
 </script>
 
@@ -142,7 +208,12 @@
       </nav>
 
       <div class="mt-auto">
-        <Button variant="secondary" className="w-full" on:click={lock}><Lock size={17} /> Lock vault</Button>
+        <Button
+          variant="secondary"
+          className="w-full"
+          on:click={lock}
+          title="Quick lock: Ctrl/Cmd + Shift + L"
+        ><Lock size={17} /> Lock vault</Button>
       </div>
     </aside>
 
@@ -154,21 +225,21 @@
       {:else if view === 'projects'}
         <ProjectView />
       {:else}
-        <SettingsView {status} onStatus={(next) => (status = next)} />
+        <SettingsView {status} onStatus={applyStatus} />
       {/if}
     </main>
 
     <nav class="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-border bg-card/95 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
       {#each navigation as item}
         <button
-          class={`flex min-w-[64px] flex-col items-center gap-1 px-2 py-2 text-xs ${view === item.id ? 'text-primary' : 'text-muted-foreground'}`}
+          class={`flex min-w-[72px] flex-col items-center gap-1 px-3 py-2 text-xs ${view === item.id ? 'text-primary' : 'text-muted-foreground'}`}
           on:click={() => (view = item.id)}
         >
           <svelte:component this={item.icon} size={20} />
           {item.label}
         </button>
       {/each}
-      <button class="flex min-w-[64px] flex-col items-center gap-1 px-2 py-2 text-xs text-muted-foreground" on:click={lock}>
+      <button class="flex min-w-[72px] flex-col items-center gap-1 px-3 py-2 text-xs text-muted-foreground" on:click={lock}>
         <Lock size={20} /> Lock
       </button>
     </nav>

@@ -6,8 +6,12 @@ use std::sync::{
 use parking_lot::Mutex;
 
 use crate::{
-    credentials::CredentialRepository, gallery::GalleryRepository, media_server::MediaServer,
-    projects::ProjectRepository, session::SessionState,
+    credentials::CredentialRepository,
+    gallery::{GalleryRepository, GalleryTrash},
+    media_server::MediaServer,
+    paths::VaultPaths,
+    projects::ProjectRepository,
+    session::SessionState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,11 +28,7 @@ pub struct ClipboardTracker {
 
 impl ClipboardTracker {
     fn new() -> Self {
-        Self {
-            next_generation: AtomicU64::new(0),
-            tracked: Mutex::new(None),
-            operation: Mutex::new(()),
-        }
+        Self { next_generation: AtomicU64::new(0), tracked: Mutex::new(None), operation: Mutex::new(()) }
     }
 
     pub fn with_operation<T>(&self, operation: impl FnOnce() -> T) -> T {
@@ -37,24 +37,17 @@ impl ClipboardTracker {
     }
 
     pub fn track(&self, digest: [u8; 32]) -> u64 {
-        let generation = self
-            .next_generation
-            .fetch_add(1, Ordering::AcqRel)
-            .wrapping_add(1);
+        let generation = self.next_generation.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         *self.tracked.lock() = Some(TrackedClipboard { generation, digest });
         generation
     }
 
     pub fn current(&self) -> Option<(u64, [u8; 32])> {
-        self.tracked
-            .lock()
-            .map(|tracked| (tracked.generation, tracked.digest))
+        self.tracked.lock().map(|tracked| (tracked.generation, tracked.digest))
     }
 
     pub fn is_current(&self, generation: u64) -> bool {
-        self.tracked
-            .lock()
-            .is_some_and(|tracked| tracked.generation == generation)
+        self.tracked.lock().is_some_and(|tracked| tracked.generation == generation)
     }
 
     pub fn clear_if_generation(&self, generation: u64) {
@@ -67,8 +60,10 @@ impl ClipboardTracker {
 
 #[derive(Clone)]
 pub struct AppState {
+    pub paths: VaultPaths,
     pub session: Arc<SessionState>,
     pub gallery: Arc<GalleryRepository>,
+    pub gallery_trash: Arc<GalleryTrash>,
     pub credentials: Arc<CredentialRepository>,
     pub projects: Arc<ProjectRepository>,
     pub media_server: Arc<MediaServer>,
@@ -79,15 +74,19 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(
+        paths: VaultPaths,
         session: Arc<SessionState>,
         gallery: Arc<GalleryRepository>,
+        gallery_trash: Arc<GalleryTrash>,
         credentials: Arc<CredentialRepository>,
         projects: Arc<ProjectRepository>,
         media_server: Arc<MediaServer>,
     ) -> Self {
         Self {
+            paths,
             session,
             gallery,
+            gallery_trash,
             credentials,
             projects,
             media_server,
@@ -108,9 +107,7 @@ impl AppState {
                 .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                return Some(ProtocolPermit {
-                    active: Arc::clone(&self.protocol_active),
-                });
+                return Some(ProtocolPermit { active: Arc::clone(&self.protocol_active) });
             }
         }
     }

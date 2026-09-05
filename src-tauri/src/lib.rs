@@ -1,8 +1,10 @@
+mod activity;
 mod commands;
 mod credentials;
 mod crypto;
 mod error;
 mod gallery;
+mod health;
 mod media_server;
 mod paths;
 mod project_commands;
@@ -20,8 +22,13 @@ use tauri::{
 };
 
 use crate::{
-    credentials::CredentialRepository, gallery::GalleryRepository, media_server::MediaServer,
-    paths::VaultPaths, projects::ProjectRepository, session::SessionState, state::AppState,
+    credentials::CredentialRepository,
+    gallery::{prepare_trash_recovery, GalleryRepository, GalleryTrash},
+    media_server::MediaServer,
+    paths::VaultPaths,
+    projects::ProjectRepository,
+    session::SessionState,
+    state::AppState,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -62,8 +69,7 @@ pub fn run() {
                     && state.session.lock_on_blur());
                 #[cfg(mobile)]
                 let should_lock = should_lock
-                    || (matches!(event, tauri::WindowEvent::Suspended)
-                        && state.session.lock_on_suspend());
+                    || (matches!(event, tauri::WindowEvent::Suspended) && state.session.lock_on_suspend());
 
                 if should_lock {
                     state.media_server.revoke_all();
@@ -82,19 +88,23 @@ pub fn run() {
             let paths = VaultPaths::new(&local_data);
             paths.create_all()?;
 
+            prepare_trash_recovery(&paths.gallery_db, &paths.gallery_objects, &paths.gallery_thumbnails)?;
             let session = Arc::new(SessionState::new(paths.header.clone()));
             let gallery = Arc::new(GalleryRepository::new(
                 paths.gallery_db.clone(),
                 paths.gallery_objects.clone(),
                 paths.gallery_thumbnails.clone(),
             )?);
+            let gallery_trash = Arc::new(GalleryTrash::new(
+                paths.gallery_db.clone(),
+                paths.gallery_objects.clone(),
+                paths.gallery_thumbnails.clone(),
+            )?);
             let credentials = Arc::new(CredentialRepository::new(paths.credentials_db.clone())?);
             let projects = Arc::new(ProjectRepository::new(paths.projects_db.clone())?);
-            let media_server = Arc::new(MediaServer::start(
-                Arc::clone(&session),
-                Arc::clone(&gallery),
-            )?);
-            let state = AppState::new(session, gallery, credentials, projects, media_server);
+            let media_server = Arc::new(MediaServer::start(Arc::clone(&session), Arc::clone(&gallery))?);
+            let state =
+                AppState::new(paths, session, gallery, gallery_trash, credentials, projects, media_server);
 
             if protocol_setup_state.set(state.clone()).is_err() {
                 return Err(std::io::Error::new(
@@ -107,6 +117,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            activity::record_user_activity,
             commands::session_status,
             commands::initialize_vault,
             commands::unlock_vault,
@@ -119,9 +130,14 @@ pub fn run() {
             commands::set_auto_lock,
             commands::set_delete_source_after_import,
             commands::set_security_preferences,
+            commands::vault_health_check,
             commands::gallery_page,
+            commands::gallery_trash_page,
             commands::import_media,
             commands::delete_media,
+            commands::restore_media,
+            commands::purge_media,
+            commands::empty_media_trash,
             commands::open_media_stream,
             commands::close_media_stream,
             commands::credential_page,
