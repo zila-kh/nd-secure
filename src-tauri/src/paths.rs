@@ -3,6 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use crate::error::Result;
 
 #[derive(Debug, Clone)]
@@ -40,6 +43,28 @@ impl VaultPaths {
         fs::create_dir_all(&self.gallery_thumbnails)?;
         fs::create_dir_all(&self.credentials_root)?;
         fs::create_dir_all(&self.projects_root)?;
+
+        if let Some(root) = self.header.parent() {
+            restrict_directory(root)?;
+        }
+        if let Some(gallery_root) = self.gallery_objects.parent() {
+            restrict_directory(gallery_root)?;
+        }
+        restrict_directory(&self.gallery_objects)?;
+        restrict_directory(&self.gallery_thumbnails)?;
+        restrict_directory(&self.credentials_root)?;
+        restrict_directory(&self.projects_root)?;
         Ok(())
     }
+}
+
+#[cfg(unix)]
+fn restrict_directory(path: &Path) -> Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn restrict_directory(_path: &Path) -> Result<()> {
+    Ok(())
 }
