@@ -1,9 +1,7 @@
-use std::{
-    collections::BTreeSet,
-    fs,
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::{collections::BTreeSet, fs, path::Path};
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use std::process::{Command, Stdio};
 
 use uuid::Uuid;
 
@@ -37,7 +35,7 @@ impl ProjectRepository {
         validate_registered_environment(&registration, environment)?;
         let secrets = credential_repository.project_secret_values(
             credential_root_key,
-            &registration.name,
+            &registration.id,
             environment,
             &registration.required_keys,
         )?;
@@ -83,7 +81,7 @@ impl ProjectRepository {
         let keys: Vec<String> = parsed.keys().cloned().collect();
         let existing = credential_repository.project_secret_values(
             credential_root_key,
-            &registration.name,
+            &registration.id,
             environment,
             &keys,
         )?;
@@ -118,14 +116,17 @@ impl ProjectRepository {
                     record_type: CredentialType::Secret,
                     title: key.clone(),
                     scope: CredentialScope::Project,
-                    project: Some(registration.name.clone()),
+                    project: Some(registration.id.clone()),
                     environment: Some(environment.to_owned()),
                     folder: Some("Project environments".into()),
                     username: None,
                     password: None,
                     secret_value: Some(value.as_str().to_owned()),
                     websites: Vec::new(),
-                    notes: Some("Imported from a local plaintext environment file by ND Secure".into()),
+                    notes: Some(format!(
+                        "Managed for project {} ({}) by ND Secure",
+                        registration.name, registration.id
+                    )),
                     totp_secret: None,
                     custom_fields: Vec::new(),
                     favorite: false,
@@ -181,7 +182,7 @@ impl ProjectRepository {
             validate_registered_environment(&registration, environment)?;
             let secrets = credential_repository.project_secret_values(
                 credential_root_key,
-                &registration.name,
+                &registration.id,
                 environment,
                 &registration.required_keys,
             )?;
@@ -202,6 +203,7 @@ impl ProjectRepository {
             command.current_dir(&registration.root).args(args).env_clear();
             copy_safe_parent_environment(&mut command);
             command
+                .env("ND_SECURE_PROJECT_ID", &registration.id)
                 .env("ND_SECURE_PROJECT", &registration.name)
                 .env("ND_SECURE_ENVIRONMENT", environment)
                 .stdin(Stdio::null())
