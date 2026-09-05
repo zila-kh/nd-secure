@@ -11,7 +11,8 @@ import type {
   PasswordGeneratorOptions,
   RecoveryKey,
   SessionStatus,
-  TotpCode
+  TotpCode,
+  VaultHealthReport
 } from './types';
 
 export const vaultApi = {
@@ -41,6 +42,7 @@ export const vaultApi = {
       lockOnSuspend,
       clipboardTimeoutSeconds
     }),
+  healthCheck: () => invoke<VaultHealthReport>('vault_health_check'),
 
   galleryPage: (cursor: string | null = null, limit = 100) =>
     invoke<GalleryPage>('gallery_page', { cursor, limit }),
