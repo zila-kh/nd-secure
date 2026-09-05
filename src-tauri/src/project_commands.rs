@@ -149,10 +149,7 @@ pub async fn run_project_command(
     let projects = Arc::clone(&state.projects);
     let credentials = Arc::clone(&state.credentials);
     let request = ProjectCommandRequest { id, environment, program, args };
-    blocking(move || {
-        projects.run_command(&project_key, credentials.as_ref(), &credential_key, request)
-    })
-    .await
+    blocking(move || projects.run_command(&project_key, credentials.as_ref(), &credential_key, request)).await
 }
 
 fn canonical_uuid(value: &str) -> Result<Uuid> {
