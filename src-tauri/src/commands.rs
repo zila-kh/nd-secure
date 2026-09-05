@@ -11,12 +11,12 @@ use zeroize::Zeroizing;
 use crate::{
     credentials::{
         generate_password as create_password, generate_password_with_options, generate_totp,
-        CredentialDetail, CredentialInput, CredentialPage, GeneratedPassword, PasswordGeneratorOptions,
-        TotpCode,
+        CredentialDetail, CredentialInput, CredentialPage, GeneratedPassword,
+        PasswordGeneratorOptions, TotpCode,
     },
     crypto::{CREDENTIALS_DOMAIN, GALLERY_DOMAIN},
     error::{Result, VaultError},
-    gallery::GalleryPage,
+    gallery::{GalleryPage, GalleryTrashPage},
     session::{RecoveryKey, SessionStatus},
     source,
     state::AppState,
@@ -110,7 +110,10 @@ pub async fn initialize_vault(
 }
 
 #[tauri::command]
-pub async fn unlock_vault(state: State<'_, AppState>, password: String) -> CommandResult<SessionStatus> {
+pub async fn unlock_vault(
+    state: State<'_, AppState>,
+    password: String,
+) -> CommandResult<SessionStatus> {
     let session = Arc::clone(&state.session);
     let password = Zeroizing::new(password);
     blocking(move || session.unlock(password)).await
@@ -139,14 +142,20 @@ pub async fn change_master_password(
 }
 
 #[tauri::command]
-pub async fn create_recovery_key(state: State<'_, AppState>, password: String) -> CommandResult<RecoveryKey> {
+pub async fn create_recovery_key(
+    state: State<'_, AppState>,
+    password: String,
+) -> CommandResult<RecoveryKey> {
     let session = Arc::clone(&state.session);
     let password = Zeroizing::new(password);
     blocking(move || session.create_recovery_key(password)).await
 }
 
 #[tauri::command]
-pub async fn disable_recovery(state: State<'_, AppState>, password: String) -> CommandResult<SessionStatus> {
+pub async fn disable_recovery(
+    state: State<'_, AppState>,
+    password: String,
+) -> CommandResult<SessionStatus> {
     let session = Arc::clone(&state.session);
     let password = Zeroizing::new(password);
     blocking(move || session.disable_recovery(password)).await
@@ -215,6 +224,17 @@ pub async fn gallery_page(
 }
 
 #[tauri::command]
+pub async fn gallery_trash_page(
+    state: State<'_, AppState>,
+    cursor: Option<String>,
+    limit: u32,
+) -> CommandResult<GalleryTrashPage> {
+    let key = state.session.domain_key(GALLERY_DOMAIN).map_err(public_error)?;
+    let trash = Arc::clone(&state.gallery_trash);
+    blocking(move || trash.page(&key, cursor.as_deref(), limit)).await
+}
+
+#[tauri::command]
 pub async fn import_media(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -233,7 +253,13 @@ pub async fn import_media(
     blocking(move || {
         let mut items = Vec::with_capacity(sources.len());
         for (source_index, selected) in sources.into_iter().enumerate() {
-            match source::import_source(&app, repository.as_ref(), &key, &selected, source_removal_enabled) {
+            match source::import_source(
+                &app,
+                repository.as_ref(),
+                &key,
+                &selected,
+                source_removal_enabled,
+            ) {
                 Ok(outcome) => items.push(ImportMediaItemResult {
                     source_index,
                     id: Some(outcome.id),
@@ -259,13 +285,40 @@ pub async fn import_media(
 pub async fn delete_media(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     state.session.touch().map_err(public_error)?;
     let id = canonical_uuid(&id).map_err(public_error)?;
+    let key = state.session.domain_key(GALLERY_DOMAIN).map_err(public_error)?;
     state.media_server.revoke_media(id);
-    let repository = Arc::clone(&state.gallery);
-    blocking(move || repository.delete(id)).await
+    let trash = Arc::clone(&state.gallery_trash);
+    blocking(move || trash.delete(&key, id)).await
 }
 
 #[tauri::command]
-pub fn open_media_stream(state: State<'_, AppState>, id: String) -> CommandResult<MediaStreamHandle> {
+pub async fn restore_media(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    let id = canonical_uuid(&id).map_err(public_error)?;
+    let key = state.session.domain_key(GALLERY_DOMAIN).map_err(public_error)?;
+    let trash = Arc::clone(&state.gallery_trash);
+    blocking(move || trash.restore(&key, id)).await
+}
+
+#[tauri::command]
+pub async fn purge_media(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    state.session.require_recent_reauthentication().map_err(public_error)?;
+    let id = canonical_uuid(&id).map_err(public_error)?;
+    let trash = Arc::clone(&state.gallery_trash);
+    blocking(move || trash.purge(id)).await
+}
+
+#[tauri::command]
+pub async fn empty_media_trash(state: State<'_, AppState>) -> CommandResult<usize> {
+    state.session.require_recent_reauthentication().map_err(public_error)?;
+    let trash = Arc::clone(&state.gallery_trash);
+    blocking(move || trash.empty()).await
+}
+
+#[tauri::command]
+pub fn open_media_stream(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<MediaStreamHandle> {
     state.session.touch().map_err(public_error)?;
     let id = canonical_uuid(&id).map_err(public_error)?;
     let item = state.gallery.get(id).map_err(public_error)?;
@@ -299,7 +352,14 @@ pub async fn credential_page(
     let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
     let repository = Arc::clone(&state.credentials);
     blocking(move || {
-        repository.page(&key, cursor.as_deref(), limit, &search, project.as_deref(), environment.as_deref())
+        repository.page(
+            &key,
+            cursor.as_deref(),
+            limit,
+            &search,
+            project.as_deref(),
+            environment.as_deref(),
+        )
     })
     .await
 }
@@ -316,7 +376,10 @@ pub async fn credential_trash_page(
 }
 
 #[tauri::command]
-pub async fn credential_detail(state: State<'_, AppState>, id: String) -> CommandResult<CredentialDetail> {
+pub async fn credential_detail(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<CredentialDetail> {
     let id = canonical_uuid(&id).map_err(public_error)?;
     let key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
     let repository = Arc::clone(&state.credentials);
@@ -418,7 +481,9 @@ pub fn generate_password(length: usize, symbols: bool) -> CommandResult<Generate
 }
 
 #[tauri::command]
-pub fn generate_password_advanced(options: PasswordGeneratorOptions) -> CommandResult<GeneratedPassword> {
+pub fn generate_password_advanced(
+    options: PasswordGeneratorOptions,
+) -> CommandResult<GeneratedPassword> {
     generate_password_with_options(options).map_err(public_error)
 }
 
