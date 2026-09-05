@@ -12,8 +12,8 @@ use crate::{
 
 use super::{
     env::{
-        detect_plaintext_env_files, merge_env_example, parse_env_file_values,
-        resolve_plaintext_env_file, validate_registered_environment,
+        detect_plaintext_env_files, merge_env_example, parse_env_file_values, resolve_plaintext_env_file,
+        validate_env_file_environment, validate_registered_environment,
     },
     ProjectCommandResult, ProjectEnvImportResult, ProjectEnvironmentStatus, ProjectRepository,
 };
@@ -40,18 +40,10 @@ impl ProjectRepository {
             &registration.required_keys,
         )?;
         let present: BTreeSet<String> = secrets.keys().cloned().collect();
-        let missing_keys = registration
-            .required_keys
-            .iter()
-            .filter(|key| !present.contains(*key))
-            .cloned()
-            .collect();
-        let present_keys = registration
-            .required_keys
-            .iter()
-            .filter(|key| present.contains(*key))
-            .cloned()
-            .collect();
+        let missing_keys =
+            registration.required_keys.iter().filter(|key| !present.contains(*key)).cloned().collect();
+        let present_keys =
+            registration.required_keys.iter().filter(|key| present.contains(*key)).cloned().collect();
         drop(secrets);
         Ok(ProjectEnvironmentStatus {
             project_id: registration.id,
@@ -73,6 +65,7 @@ impl ProjectRepository {
     ) -> Result<ProjectEnvImportResult> {
         let registration = self.detail(project_root_key, id)?;
         validate_registered_environment(&registration, environment)?;
+        validate_env_file_environment(&registration, file_name, environment)?;
         let source_path = resolve_plaintext_env_file(&registration.root, file_name)?;
         let parsed = parse_env_file_values(&source_path)?;
         if parsed.is_empty() {
@@ -212,8 +205,7 @@ impl ProjectRepository {
             for (key, value) in &secrets {
                 command.env(key, value.as_str());
             }
-            let mut child =
-                command.spawn().map_err(|error| VaultError::Platform(error.to_string()))?;
+            let mut child = command.spawn().map_err(|error| VaultError::Platform(error.to_string()))?;
             let pid = child.id();
             let injected_keys = registration.required_keys.clone();
             drop(secrets);
