@@ -3,6 +3,7 @@ mod credentials;
 mod crypto;
 mod error;
 mod gallery;
+mod health;
 mod media_server;
 mod paths;
 mod protocol;
@@ -97,7 +98,7 @@ pub fn run() {
             )?);
             let credentials = Arc::new(CredentialRepository::new(paths.credentials_db.clone())?);
             let media_server = Arc::new(MediaServer::start(Arc::clone(&session), Arc::clone(&gallery))?);
-            let state = AppState::new(session, gallery, gallery_trash, credentials, media_server);
+            let state = AppState::new(paths, session, gallery, gallery_trash, credentials, media_server);
 
             if protocol_setup_state.set(state.clone()).is_err() {
                 return Err(std::io::Error::new(
@@ -122,6 +123,7 @@ pub fn run() {
             commands::set_auto_lock,
             commands::set_delete_source_after_import,
             commands::set_security_preferences,
+            commands::vault_health_check,
             commands::gallery_page,
             commands::gallery_trash_page,
             commands::import_media,
