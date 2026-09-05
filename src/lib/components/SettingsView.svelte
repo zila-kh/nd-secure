@@ -6,6 +6,7 @@
     Database,
     HardDrive,
     KeyRound,
+    LoaderCircle,
     MonitorOff,
     ShieldAlert,
     ShieldCheck,
@@ -13,7 +14,7 @@
   } from 'lucide-svelte';
   import { onDestroy } from 'svelte';
   import { vaultApi } from '../api';
-  import type { SessionStatus } from '../types';
+  import type { SessionStatus, VaultHealthReport } from '../types';
   import Button from './ui/Button.svelte';
   import Card from './ui/Card.svelte';
   import Input from './ui/Input.svelte';
@@ -26,6 +27,8 @@
   let savingLifecycle = false;
   let passwordBusy = false;
   let recoveryBusy = false;
+  let healthBusy = false;
+  let healthReport: VaultHealthReport | null = null;
   let error = '';
   let success = '';
   let autoLockSeconds = status.autoLockSeconds;
@@ -177,6 +180,31 @@
     }
   }
 
+  async function runHealthCheck() {
+    healthBusy = true;
+    healthReport = null;
+    error = '';
+    success = '';
+    try {
+      healthReport = await vaultApi.healthCheck();
+      if (healthReport.healthy) {
+        success = 'Full vault integrity check passed.';
+      } else {
+        error = `Vault integrity check found ${healthReport.totalIssues} issue${healthReport.totalIssues === 1 ? '' : 's'}. Review the report below before relying on this copy.`;
+      }
+    } catch (cause) {
+      error = `Unable to complete vault integrity check: ${String(cause)}`;
+    } finally {
+      healthBusy = false;
+    }
+  }
+
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  }
+
   onDestroy(() => {
     currentPassword = '';
     newPassword = '';
@@ -189,7 +217,7 @@
 <section class="animate-fadeIn h-full overflow-auto pb-10">
   <header class="mb-5">
     <h2 class="text-2xl font-semibold tracking-tight">Security Settings</h2>
-    <p class="text-sm text-muted-foreground">Envelope encryption, recovery, local lifecycle locks, and import safety for this device.</p>
+    <p class="text-sm text-muted-foreground">Envelope encryption, recovery, local lifecycle locks, integrity verification, and import safety for this device.</p>
   </header>
 
   {#if error}
@@ -300,6 +328,57 @@
       </div>
     </Card>
 
+    <Card className="p-5 lg:col-span-2">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="rounded-lg bg-primary/15 p-2 text-primary"><Database size={20} /></div>
+          <div>
+            <h3 class="font-medium">Full vault integrity check</h3>
+            <p class="text-xs text-muted-foreground">Authenticate encrypted content and validate both SQLite vault indexes.</p>
+          </div>
+        </div>
+        <Button on:click={runHealthCheck} disabled={healthBusy}>
+          {#if healthBusy}<LoaderCircle size={16} class="animate-spin" />{/if}
+          {healthBusy ? 'Checking vault…' : 'Run integrity check'}
+        </Button>
+      </div>
+      <p class="text-sm text-muted-foreground">
+        The scan runs in Rust. It performs SQLite structural checks, decrypts and authenticates credential records, and verifies every encrypted media chunk and available thumbnail in both the active vault and Trash. Plaintext content is not returned to the webview. Avoid editing the vault while a scan is running for the clearest result.
+      </p>
+
+      {#if healthReport}
+        <div class={`mt-4 rounded-lg border p-4 ${healthReport.healthy ? 'border-primary/30 bg-primary/10' : 'border-destructive/40 bg-destructive/10'}`}>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="font-medium">{healthReport.healthy ? 'Integrity check passed' : 'Integrity check found issues'}</div>
+            <div class="text-xs text-muted-foreground">{new Date(healthReport.checkedAt * 1000).toLocaleString()}</div>
+          </div>
+          <div class="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
+            <div><span class="block text-xs text-muted-foreground">Gallery</span>{healthReport.galleryItems}</div>
+            <div><span class="block text-xs text-muted-foreground">Media Trash</span>{healthReport.galleryTrashItems}</div>
+            <div><span class="block text-xs text-muted-foreground">Credentials</span>{healthReport.credentialItems}</div>
+            <div><span class="block text-xs text-muted-foreground">Credential Trash</span>{healthReport.credentialTrashItems}</div>
+            <div><span class="block text-xs text-muted-foreground">Verified media</span>{formatBytes(healthReport.verifiedMediaBytes)}</div>
+          </div>
+
+          {#if !healthReport.healthy}
+            <div class="mt-4 space-y-2">
+              <div class="text-xs font-medium">{healthReport.totalIssues} issue{healthReport.totalIssues === 1 ? '' : 's'} detected</div>
+              {#each healthReport.issues as issue}
+                <div class="rounded border border-destructive/30 bg-background/60 px-3 py-2 text-xs">
+                  <span class="font-medium">{issue.area}</span>
+                  {#if issue.id}<span class="ml-1 text-muted-foreground">· {issue.id}</span>{/if}
+                  <div class="mt-1 text-muted-foreground">{issue.message}</div>
+                </div>
+              {/each}
+              {#if healthReport.totalIssues > healthReport.issues.length}
+                <div class="text-xs text-muted-foreground">Only the first {healthReport.issues.length} issues are shown.</div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </Card>
+
     <Card className="p-5">
       <div class="mb-4 flex items-center gap-3">
         <div class="rounded-lg bg-primary/15 p-2 text-primary"><Trash2 size={20} /></div>
@@ -349,7 +428,7 @@
         </div>
       </div>
       <p class="text-sm text-muted-foreground">
-        Media and generated image thumbnails are stored as independently authenticated encrypted chunks. Credential payloads, folders, custom fields, password history, project names, and environment names are encrypted per record. Original media names and source paths are not retained.
+        Media and generated image thumbnails are stored as independently authenticated encrypted chunks. Deleted media remains encrypted in recoverable Trash until explicitly purged. Credential payloads, folders, custom fields, password history, project names, and environment names are encrypted per record. Original media names and source paths are not retained.
       </p>
     </Card>
 
@@ -388,7 +467,7 @@
         </div>
       </div>
       <p class="text-sm text-muted-foreground">
-        UUIDs, item counts, record types, record state (active/trash), timestamps, media MIME types, media sizes, and thumbnail availability remain visible in SQLite. Passwords, usernames, notes, websites, custom fields, project/environment names, TOTP seeds, media bytes, and thumbnail pixels are encrypted.
+        UUIDs, item counts, record types, record state (active/trash), timestamps, active-media MIME types, active-media sizes, and thumbnail availability remain visible in SQLite. Trashed-media descriptive metadata is authenticated and encrypted. Passwords, usernames, notes, websites, custom fields, project/environment names, TOTP seeds, media bytes, and thumbnail pixels are encrypted.
       </p>
     </Card>
   </div>
