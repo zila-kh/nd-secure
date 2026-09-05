@@ -69,6 +69,10 @@ pub(super) fn write_project_manifest(registration: &ProjectRegistration) -> Resu
     Ok(())
 }
 
+pub(super) fn sanitize_env_example(root: &Path, keys: &[String]) -> Result<()> {
+    write_value_free_env_example(&root.join(".env.example"), keys)
+}
+
 pub(super) fn ensure_gitignore(root: &str) -> Result<()> {
     let path = Path::new(root).join(".gitignore");
     let existing = match fs::read_to_string(&path) {
@@ -77,7 +81,7 @@ pub(super) fn ensure_gitignore(root: &str) -> Result<()> {
         Err(error) => return Err(error.into()),
     };
     let managed = format!(
-        "{GITIGNORE_BEGIN}\n.env\n.env.*\n!.env.example\n!.env.*.example\n!.env.sample\n!.env.*.sample\n!.env.template\n!.env.*.template\n{GITIGNORE_END}\n"
+        "{GITIGNORE_BEGIN}\n.env\n.env.*\n!.env.example\n{GITIGNORE_END}\n"
     );
     let begin = existing.find(GITIGNORE_BEGIN);
     let end = existing.find(GITIGNORE_END);
@@ -237,39 +241,17 @@ pub(super) fn parse_env_file_values(
 
 pub(super) fn merge_env_example(root: &Path, keys: &[String]) -> Result<()> {
     let path = root.join(".env.example");
-    let existing = match fs::read_to_string(&path) {
-        Ok(value) => value,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error.into()),
-    };
-    let existing_keys: BTreeSet<String> = if path.is_file() {
+    let mut all_keys: BTreeSet<String> = if path.is_file() {
         parse_env_example_keys(&path)?.into_iter().collect()
     } else {
         BTreeSet::new()
     };
-    let mut missing: Vec<String> = keys
-        .iter()
-        .filter(|key| !existing_keys.contains(*key))
-        .cloned()
-        .collect();
-    missing.sort();
-    if missing.is_empty() {
-        return Ok(());
+    for key in keys {
+        validate_env_key(key)?;
+        all_keys.insert(key.clone());
     }
-    let mut updated = existing;
-    if !updated.is_empty() && !updated.ends_with('\n') {
-        updated.push('\n');
-    }
-    if !updated.is_empty() {
-        updated.push('\n');
-    }
-    updated.push_str("# Secret values are managed by ND Secure. Keep this file value-free.\n");
-    for key in missing {
-        updated.push_str(&key);
-        updated.push_str("=\n");
-    }
-    fs::write(path, updated)?;
-    Ok(())
+    let all_keys: Vec<String> = all_keys.into_iter().collect();
+    write_value_free_env_example(&path, &all_keys)
 }
 
 pub(super) fn validate_project_name(name: &str) -> Result<String> {
@@ -313,13 +295,7 @@ pub(super) fn validate_registered_environment(
 }
 
 fn is_plaintext_env_name(name: &str) -> bool {
-    if name != ".env" && !name.starts_with(".env.") {
-        return false;
-    }
-    let lower = name.to_ascii_lowercase();
-    !lower.ends_with(".example")
-        && !lower.ends_with(".sample")
-        && !lower.ends_with(".template")
+    (name == ".env" || name.starts_with(".env.")) && name != ".env.example"
 }
 
 fn parse_env_example_keys(path: &Path) -> Result<Vec<String>> {
@@ -340,6 +316,34 @@ fn parse_env_example_keys(path: &Path) -> Result<Vec<String>> {
         ));
     }
     Ok(keys.into_iter().collect())
+}
+
+fn write_value_free_env_example(path: &Path, keys: &[String]) -> Result<()> {
+    if keys.len() > MAX_KEYS {
+        return Err(VaultError::InvalidInput(
+            "too many environment keys".into(),
+        ));
+    }
+    let mut unique = BTreeSet::new();
+    for key in keys {
+        validate_env_key(key)?;
+        unique.insert(key.as_str());
+    }
+    let mut output = String::from(
+        "# Managed by ND Secure. This file intentionally contains key names only.\n# Real values live in the encrypted vault and are injected only when authorized.\n",
+    );
+    for key in unique {
+        output.push_str(key);
+        output.push_str("=\n");
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path)?;
+    file.write_all(output.as_bytes())?;
+    file.sync_all()?;
+    Ok(())
 }
 
 fn parse_env_assignment(line: &str) -> Result<Option<(String, &str)>> {
@@ -457,20 +461,40 @@ mod tests {
     }
 
     #[test]
-    fn plaintext_env_detection_excludes_examples() {
+    fn plaintext_env_detection_only_trusts_the_main_example_file() {
         let directory = tempfile::tempdir().unwrap();
         fs::write(directory.path().join(".env"), "SECRET=value").unwrap();
         fs::write(directory.path().join(".env.prod"), "SECRET=value").unwrap();
         fs::write(directory.path().join(".env.example"), "SECRET=").unwrap();
         fs::write(
             directory.path().join(".env.prod.example"),
-            "SECRET=",
+            "SECRET=value",
         )
         .unwrap();
+        fs::write(directory.path().join(".env.sample"), "SECRET=value").unwrap();
         assert_eq!(
             detect_plaintext_env_files(directory.path()).unwrap(),
-            vec![".env", ".env.prod"]
+            vec![".env", ".env.prod", ".env.prod.example", ".env.sample"]
         );
+    }
+
+    #[test]
+    fn sanitize_env_example_removes_all_values_and_untrusted_comments() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(".env.example");
+        fs::write(
+            &path,
+            "# password=leaked-in-comment\nDATABASE_URL=postgres://secret\nAPI_TOKEN=secret-token\n",
+        )
+        .unwrap();
+        let keys = parse_env_example_keys(&path).unwrap();
+        sanitize_env_example(directory.path(), &keys).unwrap();
+        let sanitized = fs::read_to_string(&path).unwrap();
+        assert!(sanitized.contains("API_TOKEN=\n"));
+        assert!(sanitized.contains("DATABASE_URL=\n"));
+        assert!(!sanitized.contains("postgres://secret"));
+        assert!(!sanitized.contains("secret-token"));
+        assert!(!sanitized.contains("leaked-in-comment"));
     }
 
     #[test]
