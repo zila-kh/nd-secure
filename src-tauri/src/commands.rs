@@ -17,6 +17,7 @@ use crate::{
     crypto::{CREDENTIALS_DOMAIN, GALLERY_DOMAIN},
     error::{Result, VaultError},
     gallery::{GalleryPage, GalleryTrashPage},
+    health::{self, VaultHealthReport},
     session::{RecoveryKey, SessionStatus},
     source,
     state::AppState,
@@ -208,6 +209,27 @@ pub async fn set_security_preferences(
     let session = Arc::clone(&state.session);
     blocking(move || {
         session.set_security_preferences(lock_on_blur, lock_on_suspend, clipboard_timeout_seconds)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn vault_health_check(state: State<'_, AppState>) -> CommandResult<VaultHealthReport> {
+    let gallery_key = state.session.domain_key(GALLERY_DOMAIN).map_err(public_error)?;
+    let credential_key = state.session.domain_key(CREDENTIALS_DOMAIN).map_err(public_error)?;
+    let paths = state.paths.clone();
+    let gallery = Arc::clone(&state.gallery);
+    let gallery_trash = Arc::clone(&state.gallery_trash);
+    let credentials = Arc::clone(&state.credentials);
+    blocking(move || {
+        health::check_vault(
+            &paths,
+            gallery.as_ref(),
+            gallery_trash.as_ref(),
+            credentials.as_ref(),
+            &gallery_key,
+            &credential_key,
+        )
     })
     .await
 }
