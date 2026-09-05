@@ -342,7 +342,7 @@ mod filtered_page_tests {
             },
             scope: CredentialScope::Project,
             project: Some(if matches { "nd-secure" } else { "other" }.into()),
-            environment: Some(if index % 2 == 0 { "prod" } else { "dev" }.into()),
+            environment: Some(if index.is_multiple_of(2) { "prod" } else { "dev" }.into()),
             folder: Some("Infrastructure".into()),
             username: Some(format!("person-{index}@example.com")),
             password: Some("correct-horse-battery-staple".into()),
@@ -384,7 +384,7 @@ mod filtered_page_tests {
         let repository = CredentialRepository::new(directory.path().join("credentials.sqlite3")).unwrap();
         let key = [31_u8; 32];
         for index in 0..12 {
-            repository.save(&key, input(index, index % 3 != 0)).unwrap();
+            repository.save(&key, input(index, !index.is_multiple_of(3))).unwrap();
         }
 
         let expected = repository
