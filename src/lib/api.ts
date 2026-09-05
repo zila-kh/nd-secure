@@ -4,6 +4,7 @@ import type {
   CredentialInput,
   CredentialPage,
   GalleryPage,
+  GalleryTrashPage,
   GeneratedPassword,
   ImportMediaResult,
   MediaStreamHandle,
@@ -43,8 +44,13 @@ export const vaultApi = {
 
   galleryPage: (cursor: string | null = null, limit = 100) =>
     invoke<GalleryPage>('gallery_page', { cursor, limit }),
+  galleryTrashPage: (cursor: string | null = null, limit = 100) =>
+    invoke<GalleryTrashPage>('gallery_trash_page', { cursor, limit }),
   importMedia: (sources: string[]) => invoke<ImportMediaResult>('import_media', { sources }),
   deleteMedia: (id: string) => invoke<void>('delete_media', { id }),
+  restoreMedia: (id: string) => invoke<void>('restore_media', { id }),
+  purgeMedia: (id: string) => invoke<void>('purge_media', { id }),
+  emptyMediaTrash: () => invoke<number>('empty_media_trash'),
   openMediaStream: (id: string) => invoke<MediaStreamHandle>('open_media_stream', { id }),
   closeMediaStream: (token: string) => invoke<void>('close_media_stream', { token }),
 
