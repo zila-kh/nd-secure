@@ -1,4 +1,4 @@
-export type VaultView = 'gallery' | 'passwords' | 'settings';
+export type VaultView = 'gallery' | 'passwords' | 'projects' | 'settings';
 
 export interface SessionStatus {
   initialized: boolean;
@@ -126,4 +126,42 @@ export interface PasswordGeneratorOptions {
 export interface TotpCode {
   code: string;
   remainingSeconds: number;
+}
+
+export interface ProjectRegistration {
+  id: string;
+  name: string;
+  root: string;
+  environments: string[];
+  requiredKeys: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProjectInspection {
+  root: string;
+  suggestedName: string;
+  exampleExists: boolean;
+  requiredKeys: string[];
+  plaintextEnvFiles: string[];
+}
+
+export interface ProjectEnvironmentStatus {
+  projectId: string;
+  environment: string;
+  presentKeys: string[];
+  missingKeys: string[];
+  plaintextEnvFiles: string[];
+}
+
+export interface ProjectEnvImportResult {
+  importedKeys: string[];
+  existingKeys: string[];
+  sourceRemoved: boolean;
+  rotationRecommended: boolean;
+}
+
+export interface ProjectCommandResult {
+  pid: number;
+  injectedKeys: string[];
 }
