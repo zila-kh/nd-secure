@@ -9,8 +9,10 @@
   import UnlockScreen from './lib/components/UnlockScreen.svelte';
   import Button from './lib/components/ui/Button.svelte';
   import type { SessionStatus, VaultView } from './lib/types';
+  import { LatestRequest } from './lib/workflow-state';
 
   const ACTIVITY_HEARTBEAT_MS = 15_000;
+  const statusRequests = new LatestRequest();
 
   let status: SessionStatus = {
     initialized: false,
@@ -26,8 +28,13 @@
   let view: VaultView = 'gallery';
   let loading = true;
   let busy = false;
+  let locking = false;
+  let lockFailed = false;
+  let statusKnown = false;
+  let statusPending = false;
+  let destroyed = false;
   let error = '';
-  let statusGeneration = 0;
+  let connectionError = '';
   let statusTimer: ReturnType<typeof setInterval> | undefined;
   let lastActivityHeartbeat = 0;
   let activityHeartbeatPending = false;
@@ -39,87 +46,106 @@
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
-  function applyStatus(next: SessionStatus) {
-    statusGeneration += 1;
+  function commitStatus(next: SessionStatus) {
     status = next;
+    statusKnown = true;
+    if (next.locked) view = 'gallery';
+  }
+
+  function applyStatus(next: SessionStatus) {
+    // A settings operation may finish after its screen was destroyed by a lock.
+    if (destroyed || busy || status.locked || lockFailed) return;
+    statusRequests.invalidate();
+    commitStatus(next);
   }
 
   async function refreshStatus() {
-    const generation = statusGeneration;
+    // Do not race an authentication or lock command with a periodic status read.
+    if (destroyed || busy || statusPending || lockFailed) return;
+    const current = statusRequests.begin();
+    statusPending = true;
     try {
       const next = await vaultApi.status();
-      if (generation !== statusGeneration) return;
-      status = next;
-      if (next.locked) view = 'gallery';
-      error = '';
+      if (!current()) return;
+      commitStatus(next);
+      connectionError = '';
     } catch (cause) {
-      if (generation === statusGeneration) error = String(cause);
+      if (current()) connectionError = String(cause);
     } finally {
-      loading = false;
+      statusPending = false;
+      if (current()) loading = false;
+    }
+  }
+
+  async function authenticate(operation: () => Promise<SessionStatus>) {
+    if (destroyed || busy || !statusKnown || lockFailed) return;
+    const current = statusRequests.begin();
+    busy = true;
+    error = '';
+    try {
+      const next = await operation();
+      if (!current()) return;
+      commitStatus(next);
+      connectionError = '';
+      lastActivityHeartbeat = performance.now();
+    } catch (cause) {
+      if (current()) error = String(cause);
+    } finally {
+      if (current()) {
+        busy = false;
+        statusRequests.invalidate();
+      }
     }
   }
 
   async function submitPassword(password: string) {
-    const generation = ++statusGeneration;
-    busy = true;
-    error = '';
-    try {
-      const next = status.initialized
-        ? await vaultApi.unlock(password)
-        : await vaultApi.initialize(password, status.autoLockSeconds);
-      if (generation === statusGeneration) {
-        status = next;
-        lastActivityHeartbeat = performance.now();
-      }
-    } catch (cause) {
-      if (generation === statusGeneration) error = String(cause);
-    } finally {
-      if (generation === statusGeneration) busy = false;
-    }
+    await authenticate(() => status.initialized
+      ? vaultApi.unlock(password)
+      : vaultApi.initialize(password, status.autoLockSeconds));
   }
 
   async function recoverVault(recoveryKey: string, newPassword: string) {
-    const generation = ++statusGeneration;
-    busy = true;
-    error = '';
-    try {
-      const next = await vaultApi.recover(recoveryKey, newPassword);
-      if (generation === statusGeneration) {
-        status = next;
-        lastActivityHeartbeat = performance.now();
-      }
-    } catch (cause) {
-      if (generation === statusGeneration) error = String(cause);
-    } finally {
-      if (generation === statusGeneration) busy = false;
-    }
+    await authenticate(() => vaultApi.recover(recoveryKey, newPassword));
   }
 
   async function lock() {
-    const generation = ++statusGeneration;
+    if (destroyed || locking) return;
+    const current = statusRequests.begin();
+    locking = true;
+    busy = true;
+    lockFailed = false;
+    error = '';
+    // Remove sensitive screens immediately, not after the IPC round trip.
+    status = { ...status, locked: true, recentlyReauthenticated: false };
+    view = 'gallery';
     try {
       const next = await vaultApi.lock();
-      if (generation !== statusGeneration) return;
-      status = next;
-      view = 'gallery';
+      if (!current()) return;
+      commitStatus(next);
+      connectionError = '';
     } catch (cause) {
-      if (generation === statusGeneration) error = String(cause);
+      if (current()) {
+        lockFailed = true;
+        error = String(cause);
+      }
+    } finally {
+      if (current()) {
+        locking = false;
+        busy = false;
+        statusRequests.invalidate();
+      }
     }
   }
 
   function recordUserActivity(event: Event) {
-    if (status.locked || !event.isTrusted || activityHeartbeatPending) return;
-
+    if (destroyed || status.locked || busy || !event.isTrusted || activityHeartbeatPending) return;
     const now = performance.now();
     if (now - lastActivityHeartbeat < ACTIVITY_HEARTBEAT_MS) return;
     lastActivityHeartbeat = now;
     activityHeartbeatPending = true;
-    void vaultApi
-      .recordActivity()
+    void vaultApi.recordActivity()
       .catch(() => refreshStatus())
-      .finally(() => {
-        activityHeartbeatPending = false;
-      });
+      .finally(() => { activityHeartbeatPending = false; });
   }
 
   function visibilityChanged() {
@@ -128,9 +154,7 @@
       && /Android/i.test(navigator.userAgent)
       && status.lockOnSuspend
       && !status.locked
-    ) {
-      void lock();
-    }
+    ) void lock();
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -157,6 +181,8 @@
   });
 
   onDestroy(() => {
+    destroyed = true;
+    statusRequests.dispose();
     if (statusTimer) clearInterval(statusTimer);
     document.removeEventListener('visibilitychange', visibilityChanged);
     window.removeEventListener('keydown', handleKeydown);
@@ -173,10 +199,23 @@
   <main class="flex min-h-screen items-center justify-center">
     <div class="flex items-center gap-3 text-muted-foreground"><LoaderCircle class="animate-spin" /> Loading encrypted vault…</div>
   </main>
+{:else if !statusKnown || lockFailed}
+  <main class="flex min-h-screen items-center justify-center p-6">
+    <section class="w-full max-w-lg space-y-4 rounded-xl border border-border bg-card p-6" role="alert">
+      <h1 class="text-xl font-semibold">{lockFailed ? 'Vault lock could not be confirmed' : 'Unable to connect to the native vault'}</h1>
+      <p class="text-sm text-muted-foreground">
+        {lockFailed ? 'Sensitive screens remain hidden. Retry the lock before continuing, or close the application.' : 'Open the installed ND Secure application. For development, run npm run tauri dev; the browser preview alone cannot access the encrypted vault.'}
+      </p>
+      <p class="break-words text-sm text-destructive">{lockFailed ? error : connectionError}</p>
+      <Button disabled={busy || statusPending} on:click={() => lockFailed ? lock() : refreshStatus()}>
+        {lockFailed ? 'Retry lock' : 'Retry connection'}
+      </Button>
+    </section>
+  </main>
 {:else if status.locked}
   <UnlockScreen
     {busy}
-    {error}
+    error={error || connectionError}
     initialized={status.initialized}
     recoveryConfigured={status.recoveryConfigured}
     onSubmit={submitPassword}
@@ -228,6 +267,10 @@
         <SettingsView {status} onStatus={applyStatus} />
       {/if}
     </main>
+
+    {#if connectionError || error}
+      <div role="alert" class="fixed inset-x-4 top-4 z-50 rounded-lg border border-destructive/40 bg-card px-4 py-3 text-sm text-destructive md:left-72">{connectionError || error}</div>
+    {/if}
 
     <nav class="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-border bg-card/95 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
       {#each navigation as item}
