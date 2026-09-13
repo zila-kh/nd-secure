@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "lint": "npm run check",
+    "test": "node --experimental-strip-types --test",
+    "lint": "npm run check && npm test",
     "tauri": "tauri"
   },
   "dependencies": {
