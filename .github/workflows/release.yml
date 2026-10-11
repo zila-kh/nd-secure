@@ -171,7 +171,7 @@ jobs:
           [[ "$count" == "1" ]] || { echo "Expected one DMG, found $count." >&2; exit 1; }
           mkdir -p release
           cp "$(head -n 1 "$files_list")" "release/ND-Secure_${VERSION}_macos-arm64.dmg"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ matrix.artifact }}
           path: release/*
@@ -267,7 +267,7 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: bash .github/release/stage-unsigned-android.sh
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-android-arm64
           path: release/*
